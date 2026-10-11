@@ -1,0 +1,18 @@
+{
+  "name": "toknomics",
+  "private": true,
+  "type": "module",
+  "workspaces": ["shared", "backend", "web"],
+  "scripts": {
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "build": "npm run build -w web",
+    "dev:web": "npm run dev -w web",
+    "dev:api": "npm run api -w backend",
+    "dev:worker": "npm run worker -w backend",
+    "test:db": "supabase/tests/run.sh"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.3"
+  }
+}
