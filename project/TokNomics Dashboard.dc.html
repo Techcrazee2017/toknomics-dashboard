@@ -1,0 +1,1488 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="_ds/nocturne-7bd1827e-d473-4bc5-8b9a-ec9075e0bdaf/styles.css">
+<script src="_ds/nocturne-7bd1827e-d473-4bc5-8b9a-ec9075e0bdaf/_ds_bundle.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/fill/style.css">
+<title>TokNomics — Agency dashboard</title>
+<style>
+html, body { margin: 0; background: #161826; }
+a { color: var(--color-accent); } a:hover { color: var(--color-accent-300); }
+select.input { appearance: none; padding-right: 28px; background-image: linear-gradient(45deg, transparent 50%, var(--color-neutral-400) 50%), linear-gradient(135deg, var(--color-neutral-400) 50%, transparent 50%); background-position: calc(100% - 14px) 50%, calc(100% - 10px) 50%; background-size: 4px 4px; background-repeat: no-repeat; }
+@keyframes tn-pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+@keyframes tn-in { from { opacity: 0; transform: translateY(-4px); } }
+</style>
+</helmet>
+<div style="min-height:100vh;display:flex;position:relative;background:radial-gradient(90% 60% at 85% -10%, color-mix(in srgb, var(--color-accent-900) 80%, transparent), transparent 60%), var(--color-bg);color:var(--color-text);font-family:var(--font-body);font-size:14px">
+  <sc-if value="{{ showTexture }}" hint-placeholder-val="{{ true }}">
+    <div class="lighten" style="position:fixed;inset:0;pointer-events:none;background:url(assets/circuit-texture.png) center / cover no-repeat;opacity:.07;filter:hue-rotate(78deg) saturate(.55)"></div>
+  </sc-if>
+
+  <aside style="position:sticky;top:0;height:100vh;flex:none;width:216px;display:flex;flex-direction:column;gap:var(--space-6);padding:var(--space-6) var(--space-4);box-shadow:inset -1px 0 0 var(--color-divider);z-index:2">
+    <div style="display:flex;flex-direction:column;gap:2px;padding:0 var(--space-3)">
+      <div style="font-family:var(--font-heading);font-weight:500;font-size:18px;letter-spacing:-0.01em">TokNomics</div>
+      <div style="font-size:12px;color:var(--color-neutral-500)">Northlight Agency</div>
+    </div>
+    <nav style="display:flex;flex-direction:column;gap:2px">
+      <sc-for list="{{ nav }}" as="n" hint-placeholder-count="6">
+        <button onClick="{{ n.onClick }}" style="position:relative;display:flex;align-items:center;gap:10px;width:100%;padding:8px var(--space-3);border:0;border-radius:var(--radius-md);background:{{ n.bg }};color:{{ n.color }};font:inherit;font-size:14px;text-align:left;cursor:pointer" style-hover="background:color-mix(in srgb, var(--color-text) 6%, transparent)">
+          <i class="ph {{ n.icon }}" style="font-size:17px"></i>
+          <span style="flex:1">{{ n.label }}</span>
+          <sc-if value="{{ n.hasBadge }}"><span class="tag tag-accent" style="padding:1px 7px">{{ n.badge }}</span></sc-if>
+        </button>
+      </sc-for>
+    </nav>
+    <div style="margin-top:auto;display:flex;flex-direction:column;gap:6px;padding:var(--space-3);font-size:12px;color:var(--color-neutral-500)">
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <span>Signed in as Kai Moreno · view as</span>
+        <div class="seg" style="align-self:flex-start"><sc-for list="{{ viewOpts }}" as="o" hint-placeholder-count="2"><label class="seg-opt" style="padding:4px 9px;font-size:12px"><input type="radio" name="tn-view" checked="{{ o.checked }}" onChange="{{ o.on }}">{{ o.label }}</label></sc-for></div>
+      </div>
+      <div>1 coin = $0.0133 · 1 diamond = $0.005</div>
+    </div>
+  </aside>
+
+  <main style="flex:1;min-width:0;display:flex;flex-direction:column;gap:var(--space-8);padding:0 var(--space-8) 64px;position:relative;z-index:1">
+    <button onClick="{{ goSource }}" style="position:sticky;top:0;z-index:5;margin:0 calc(-1 * var(--space-8));display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-3) var(--space-6);padding:9px var(--space-8);border:0;background:color-mix(in srgb, var(--color-bg) 82%, transparent);backdrop-filter:blur(10px);box-shadow:inset 0 -1px 0 var(--color-divider);color:var(--color-neutral-300);font:inherit;font-size:12px;text-align:left;cursor:pointer" style-hover="color:var(--color-text)">
+      <span style="display:flex;align-items:center;gap:8px"><span style="width:7px;height:7px;border-radius:50%;background:{{ src.dot }};animation:{{ src.anim }}"></span><span style="color:var(--color-text)">Euler Stream</span><span>{{ src.statusLabel }}</span><span class="tag tag-neutral" style="padding:1px 7px">{{ src.modeLabel }}</span></span>
+      <span style="flex: 1; color: var(--color-neutral-500); font-feature-settings: 'tnum' 1">{{ src.barRight }}</span>
+      <span style="display:flex;align-items:center;gap:4px;color:var(--color-accent)">Data source<i class="ph ph-caret-right"></i></span>
+    </button>
+    <header style="display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:var(--space-6);margin-top:var(--space-2)">
+      <div style="display:flex;flex-direction:column;gap:4px;min-width:0">
+        <h1 style="font-size:28px;margin:0">{{ title }}</h1>
+        <p style="margin:0;color:var(--color-neutral-400);max-width:62ch">{{ subtitle }}</p>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-3)">
+        <sc-if value="{{ showFilters }}" hint-placeholder-val="{{ true }}">
+          <select class="input" style="width:auto;min-height:32px;padding-block:4px" value="{{ team }}" onChange="{{ onTeam }}">
+            <option value="All teams">All teams</option><option value="Team Nova">Team Nova</option><option value="Team Atlas">Team Atlas</option><option value="Team Echo">Team Echo</option>
+          </select>
+          <select class="input" style="width:auto;min-height:32px;padding-block:4px" value="{{ tier }}" onChange="{{ onTier }}">
+            <option value="All tiers">All tiers</option><option value="S">Tier S</option><option value="A">Tier A</option><option value="B">Tier B</option>
+          </select>
+          <div class="seg">
+            <sc-for list="{{ rangeOpts }}" as="o" hint-placeholder-count="3"><label class="seg-opt" style="padding:6px 10px"><input type="radio" name="tn-range" checked="{{ o.checked }}" onChange="{{ o.on }}">{{ o.label }}</label></sc-for>
+          </div>
+        </sc-if>
+        <sc-if value="{{ showUnit }}" hint-placeholder-val="{{ true }}">
+          <div class="seg">
+            <sc-for list="{{ unitOpts }}" as="o" hint-placeholder-count="3"><label class="seg-opt" style="padding:6px 10px"><input type="radio" name="tn-unit" checked="{{ o.checked }}" onChange="{{ o.on }}">{{ o.label }}</label></sc-for>
+          </div>
+        </sc-if>
+      </div>
+    </header>
+
+    <sc-if value="{{ isOverview }}" hint-placeholder-val="{{ true }}">
+      <section style="display:grid;grid-template-columns:repeat(auto-fit, minmax(210px, 1fr));gap:var(--space-6)">
+        <sc-for list="{{ statCards }}" as="s" hint-placeholder-count="4">
+          <div class="card elev-sm" style="padding:var(--space-6);gap:var(--space-3)">
+            <div style="display:flex;align-items:center;justify-content:space-between"><span class="card-kicker">{{ s.label }}</span><i class="ph {{ s.icon }}" style="font-size:18px;color:var(--color-neutral-500)"></i></div>
+            <div style="font-family:var(--font-heading);font-weight:500;font-size:30px;letter-spacing:-0.02em;font-feature-settings:'tnum' 1;line-height:1.1">{{ s.value }}</div>
+            <div style="font-size:12px;color:var(--color-neutral-400)">{{ s.note }}</div>
+          </div>
+        </sc-for>
+      </section>
+
+      <section style="display:grid;grid-template-columns:repeat(auto-fit, minmax(min(100%, 420px), 1fr));gap:var(--space-6)">
+        <div class="card elev-sm" style="padding:var(--space-6);gap:var(--space-6);grid-column:span 1">
+          <div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:var(--space-3)">
+            <div class="card-title">Burn vs. commission</div>
+            <div style="display:flex;gap:var(--space-6);font-size:12px;color:var(--color-neutral-400)">
+              <span style="display:flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:2px;background:var(--color-neutral-700)"></span>Agency burn</span>
+              <span style="display:flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:2px;background:var(--color-accent-500)"></span>Commission</span>
+            </div>
+          </div>
+          <div style="display:flex;align-items:flex-end;gap:4px;height:200px">
+            <sc-for list="{{ buckets }}" as="b" hint-placeholder-count="7">
+              <div title="{{ b.title }}" style="flex:1;min-width:0;height:100%;display:flex;align-items:flex-end;gap:2px">
+                <div style="flex:1;height:{{ b.burnH }};min-height:2px;background:var(--color-neutral-700);border-radius:3px 3px 0 0;transition:height .4s"></div>
+                <div style="flex:1;height:{{ b.commH }};min-height:2px;background:var(--color-accent-500);border-radius:3px 3px 0 0;transition:height .4s"></div>
+              </div>
+            </sc-for>
+          </div>
+          <div style="display:flex;gap:4px;margin-top:calc(-1 * var(--space-3))">
+            <sc-for list="{{ buckets }}" as="b" hint-placeholder-count="7"><div style="flex:1;min-width:0;font-size:11px;color:var(--color-neutral-500);white-space:nowrap;overflow:visible">{{ b.label }}</div></sc-for>
+          </div>
+        </div>
+
+        <div class="card elev-sm" style="padding:var(--space-6);gap:var(--space-4)">
+          <div style="display:flex;justify-content:space-between;align-items:baseline">
+            <div class="card-title">Top supported creators</div>
+            <button class="btn btn-ghost" onClick="{{ goRoster }}">Roster<i class="ph ph-arrow-right"></i></button>
+          </div>
+          <div style="display:flex;flex-direction:column">
+            <sc-for list="{{ topSupported }}" as="c" hint-placeholder-count="5">
+              <button onClick="{{ c.onOpen }}" style="display:grid;grid-template-columns:20px 32px minmax(0,1fr) auto;align-items:center;gap:var(--space-4);padding:10px var(--space-2);border:0;background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer;border-radius:var(--radius-md)" style-hover="background:color-mix(in srgb, var(--color-text) 5%, transparent)">
+                <span style="font-size:12px;color:var(--color-neutral-500);font-feature-settings:'tnum' 1">{{ c.rank }}</span>
+                <span style="width:32px;height:32px;border-radius:50%;display:grid;place-items:center;background:var(--color-accent-900);color:var(--color-accent-300);font-size:11px;letter-spacing:.04em">{{ c.mono }}</span>
+                <span style="display:flex;flex-direction:column;gap:6px;min-width:0">
+                  <span style="display:flex;justify-content:space-between;gap:8px"><span style="overflow:hidden;text-overflow:ellipsis">{{ c.handle }}</span><span style="font-feature-settings:'tnum' 1;color:var(--color-neutral-300)">{{ c.invest }}</span></span>
+                  <span style="height:4px;border-radius:2px;background:var(--color-neutral-900)"><span style="display:block;height:100%;width:{{ c.bar }};border-radius:2px;background:var(--color-accent-600)"></span></span>
+                </span>
+                <span class="{{ c.statusClass }}" style="min-width:72px;justify-content:center;font-feature-settings:'tnum' 1">{{ c.net }}</span>
+              </button>
+            </sc-for>
+          </div>
+        </div>
+      </section>
+
+      <section style="display:grid;grid-template-columns:repeat(auto-fit, minmax(min(100%, 420px), 1fr));gap:var(--space-6)">
+        <div class="card elev-sm" style="padding:var(--space-6);gap:var(--space-4)">
+          <div class="card-title">Roster breakdown by team</div>
+          <div style="overflow-x:auto">
+            <table class="table" style="font-feature-settings:'tnum' 1">
+              <thead><tr><th>Team</th><th style="text-align:right">Creators</th><th style="text-align:right">Invested</th><th style="text-align:right">Commission</th><th style="text-align:right">Net</th></tr></thead>
+              <tbody>
+                <sc-for list="{{ teamRows }}" as="t" hint-placeholder-count="3">
+                  <tr><td>{{ t.team }}</td><td style="text-align:right">{{ t.count }}</td><td style="text-align:right">{{ t.invest }}</td><td style="text-align:right">{{ t.comm }}</td><td style="text-align:right;color:{{ t.netColor }}">{{ t.net }}</td></tr>
+                </sc-for>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card elev-sm" style="padding:var(--space-6);gap:var(--space-4)">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div class="card-title" style="display:flex;align-items:center;gap:8px"><span style="width:8px;height:8px;border-radius:50%;background:var(--color-accent-400);animation:tn-pulse 2.4s ease-in-out infinite"></span>Live gift feed</div>
+            <button class="btn btn-ghost" onClick="{{ goLedger }}">Ledger<i class="ph ph-arrow-right"></i></button>
+          </div>
+          <div style="display:flex;flex-direction:column">
+            <sc-for list="{{ feed }}" as="f" hint-placeholder-count="7">
+              <div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:var(--space-4);align-items:center;padding:8px 0;box-shadow:inset 0 -1px 0 color-mix(in srgb, var(--color-text) 6%, transparent);animation:tn-in .35s ease-out">
+                <div style="display:flex;flex-direction:column;gap:2px;min-width:0">
+                  <div style="display:flex;align-items:center;gap:6px;min-width:0;white-space:nowrap;overflow:hidden"><span style="color:var(--color-neutral-400)">{{ f.sender }}</span><i class="ph ph-arrow-right" style="color:var(--color-neutral-600);font-size:12px"></i><button onClick="{{ f.onOpen }}" style="border:0;background:none;padding:0;color:var(--color-text);font:inherit;cursor:pointer" style-hover="color:var(--color-accent-300)">{{ f.creator }}</button></div>
+                  <div style="font-size:12px;color:var(--color-neutral-500)">{{ f.gift }} · {{ f.ago }}</div>
+                </div>
+                <div style="font-feature-settings:'tnum' 1;color:var(--color-neutral-200)">{{ f.value }}</div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </section>
+    </sc-if>
+
+    <sc-if value="{{ isLedger }}">
+      <section style="display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-4)">
+        <div style="position:relative;flex:1 1 240px;max-width:340px">
+          <i class="ph ph-magnifying-glass" style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--color-neutral-500)"></i>
+          <input class="input" style="padding-left:32px" placeholder="Search creator, sender or gift" value="{{ query }}" onChange="{{ onQuery }}">
+        </div>
+        <div class="seg" style="flex-wrap:wrap">
+          <sc-for list="{{ purposeOpts }}" as="o" hint-placeholder-count="6"><label class="seg-opt" style="padding:6px 10px"><input type="radio" name="tn-purpose" checked="{{ o.checked }}" onChange="{{ o.on }}">{{ o.label }}</label></sc-for>
+        </div>
+        <div style="margin-left:auto;display:flex;align-items:center;gap:var(--space-4)">
+          <span style="color:var(--color-neutral-400);font-feature-settings:'tnum' 1">{{ ledgerSummary }}</span>
+          <button class="btn btn-secondary" onClick="{{ exportCsv }}"><i class="ph ph-download-simple"></i>Export CSV</button>
+        </div>
+      </section>
+      <div class="card elev-sm" style="padding:var(--space-3) var(--space-6)">
+        <div style="overflow-x:auto">
+          <table class="table" style="font-feature-settings:'tnum' 1;min-width:860px">
+            <thead><tr><th>Time</th><th>Sender</th><th>Recipient</th><th>Gift</th><th style="text-align:right">Coins</th><th style="text-align:right">Value</th><th style="width:220px">Purpose</th></tr></thead>
+            <tbody>
+              <sc-for list="{{ ledgerRows }}" as="r" hint-placeholder-count="10">
+                <tr>
+                  <td style="color:var(--color-neutral-400);white-space:nowrap">{{ r.time }}</td>
+                  <td style="color:var(--color-neutral-300)">{{ r.sender }}</td>
+                  <td><button onClick="{{ r.onOpen }}" style="border:0;background:none;padding:0;color:var(--color-text);font:inherit;cursor:pointer" style-hover="color:var(--color-accent-300)">{{ r.creator }}</button></td>
+                  <td>{{ r.gift }}</td>
+                  <td style="text-align:right;color:var(--color-neutral-300)">{{ r.coins }}</td>
+                  <td style="text-align:right">{{ r.value }}</td>
+                  <td>
+                    <sc-if value="{{ r.closed }}" hint-placeholder-val="{{ true }}">
+                      <button class="{{ r.tagClass }}" onClick="{{ r.onTag }}" style="cursor:pointer;font-family:inherit;gap:4px;border-width:{{ r.bw }}" style-hover="filter:brightness(1.15)"><i class="ph {{ r.tagIcon }}"></i>{{ r.purpose }}</button>
+                    </sc-if>
+                    <sc-if value="{{ r.open }}">
+                      <div style="display:flex;flex-wrap:wrap;gap:4px;animation:tn-in .2s ease-out">
+                        <sc-for list="{{ r.options }}" as="o"><button class="tag tag-outline" onClick="{{ o.on }}" style="background:transparent;cursor:pointer;font-family:inherit" style-hover="background:color-mix(in srgb, var(--color-accent) 14%, transparent)">{{ o.label }}</button></sc-for>
+                      </div>
+                    </sc-if>
+                  </td>
+                </tr>
+              </sc-for>
+            </tbody>
+          </table>
+        </div>
+        <sc-if value="{{ hasMore }}">
+          <div style="display:flex;justify-content:center;padding:var(--space-4)"><button class="btn btn-secondary" onClick="{{ loadMore }}">Show 40 more</button></div>
+        </sc-if>
+        <sc-if value="{{ ledgerEmpty }}">
+          <div style="padding:var(--space-8);text-align:center;color:var(--color-neutral-400)">No gifts match these filters.</div>
+        </sc-if>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ isRoster }}">
+      <section style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:var(--space-4)">
+        <div style="color:var(--color-neutral-400)">{{ rosterSummary }}</div>
+        <div style="display:flex;align-items:center;gap:var(--space-3)">
+          <span style="font-size:12px;color:var(--color-neutral-500)">Sort by</span>
+          <div class="seg"><sc-for list="{{ sortOpts }}" as="o" hint-placeholder-count="3"><label class="seg-opt" style="padding:6px 10px"><input type="radio" name="tn-sort" checked="{{ o.checked }}" onChange="{{ o.on }}">{{ o.label }}</label></sc-for></div>
+        </div>
+      </section>
+      <section style="display:grid;grid-template-columns:repeat(auto-fill, minmax(250px, 1fr));gap:var(--space-6)">
+        <sc-for list="{{ rosterCards }}" as="c" hint-placeholder-count="8">
+          <button onClick="{{ c.onOpen }}" class="card elev-sm" style="padding:var(--space-6);gap:var(--space-6);border:0;color:inherit;font:inherit;text-align:left;cursor:pointer;transition:box-shadow .15s" style-hover="box-shadow:var(--shadow-md)">
+            <div style="display:flex;align-items:center;gap:var(--space-4)">
+              <span style="width:40px;height:40px;flex:none;border-radius:50%;display:grid;place-items:center;background:var(--color-accent-900);color:var(--color-accent-300);font-size:13px;letter-spacing:.04em">{{ c.mono }}</span>
+              <div style="display:flex;flex-direction:column;gap:2px;min-width:0;flex:1">
+                <span style="font-size:15px;overflow:hidden;text-overflow:ellipsis">{{ c.handle }}</span>
+                <span style="font-size:12px;color:var(--color-neutral-500)">{{ c.team }} · {{ c.tier }}</span>
+              </div>
+              <span class="{{ c.statusClass }}">{{ c.status }}</span>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr auto;row-gap:8px;font-feature-settings:'tnum' 1">
+              <span style="color:var(--color-neutral-400)">Agency investment</span><span style="text-align:right">{{ c.invest }}</span>
+              <span style="color:var(--color-neutral-400)">Commission generated</span><span style="text-align:right">{{ c.comm }}</span>
+              <span style="color:var(--color-neutral-400)">Net margin</span><span style="text-align:right;color:{{ c.netColor }}">{{ c.net }}</span>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:6px">
+              <div style="display:flex;height:6px;border-radius:3px;overflow:hidden;background:var(--color-neutral-900);gap:2px">
+                <span style="width:{{ c.investShare }};background:var(--color-neutral-700)"></span>
+                <span style="flex:1;background:var(--color-accent-500)"></span>
+              </div>
+              <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--color-neutral-500)"><span>{{ c.gifts }} gifts</span><span>ROI {{ c.roi }}</span></div>
+            </div>
+          </button>
+        </sc-for>
+      </section>
+    </sc-if>
+
+    <sc-if value="{{ isBattles }}">
+      <section style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:var(--space-4)">
+        <div style="color:var(--color-neutral-400)">{{ battleSummary }}</div>
+        <button class="btn btn-primary" onClick="{{ openAdd }}"><i class="ph ph-crosshair"></i>Add target stream</button>
+      </section>
+      <section style="display:grid;grid-template-columns:repeat(auto-fit, minmax(min(100%, 600px), 1fr));gap:var(--space-6);align-items:start">
+        <div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(280px, 1fr));gap:var(--space-6)">
+          <sc-for list="{{ targets }}" as="t" hint-placeholder-count="3">
+            <div class="card elev-sm" style="padding:var(--space-6);gap:var(--space-4);animation:tn-in .3s ease-out">
+              <div style="display:flex;align-items:flex-start;gap:var(--space-3)">
+                <div style="display:flex;flex-direction:column;gap:3px;flex:1;min-width:0">
+                  <div style="display:flex;align-items:center;gap:8px"><span style="width:7px;height:7px;border-radius:50%;background:var(--color-accent-400);animation:tn-pulse 1.6s ease-in-out infinite"></span><span style="font-size:15px">{{ t.handle }}</span><span class="tag tag-neutral" style="padding:1px 8px">{{ t.type }}</span></div>
+                  <span style="font-size:12px;color:var(--color-neutral-500)">{{ t.label }}</span>
+                  <sc-if value="{{ t.hasSync }}"><span style="font-size:11px;color:{{ t.syncColor }};display:flex;align-items:center;gap:4px"><i class="{{ t.syncIcon }}"></i>{{ t.syncMsg }}<sc-if value="{{ t.syncErr }}"><button class="btn btn-ghost" onClick="{{ t.retrySync }}" style="font-size:11px;padding:0 6px;min-height:0">Retry</button></sc-if></span></sc-if>
+                </div>
+                <sc-if value="{{ t.isLive }}"><button class="btn btn-icon" onClick="{{ t.onMod }}" title="Moderate room" style="width:28px;height:28px;color:var(--color-neutral-500)" style-hover="background:color-mix(in srgb, var(--color-text) 7%, transparent);color:var(--color-text)"><i class="ph ph-shield-check"></i></button></sc-if>
+                <button class="btn btn-icon" onClick="{{ t.onRemove }}" title="Stop tracking" style="width:28px;height:28px;color:var(--color-neutral-500)" style-hover="background:color-mix(in srgb, var(--color-text) 7%, transparent);color:var(--color-text)"><i class="ph ph-x"></i></button>
+              </div>
+              <sc-if value="{{ t.isOffline }}">
+                <div style="display:flex;flex-direction:column;gap:var(--space-3);padding:var(--space-4);border-radius:var(--radius-md);box-shadow:var(--shadow-sm)">
+                  <span style="color:var(--color-neutral-300)">Offline. Tracking starts when get_room_id reports them live.</span>
+                  <button class="btn btn-secondary" onClick="{{ t.recheck }}" style="align-self:flex-start"><i class="ph ph-arrows-clockwise"></i>Check again</button>
+                </div>
+              </sc-if>
+              <sc-if value="{{ t.isLive }}" hint-placeholder-val="{{ true }}">
+              <div style="display:flex;align-items:flex-end;gap:2px;height:48px">
+                <sc-for list="{{ t.spark }}" as="h"><span style="flex:1;height:{{ h.h }};min-height:2px;background:{{ h.c }};border-radius:2px 2px 0 0;transition:height .4s"></span></sc-for>
+              </div>
+              <div style="display:grid;grid-template-columns:repeat(3, 1fr);gap:var(--space-3);font-feature-settings:'tnum' 1">
+                <div style="display:flex;flex-direction:column;gap:2px"><span style="font-size:11px;color:var(--color-neutral-500)">Incoming</span><span>{{ t.coinsIn }}</span></div>
+                <div style="display:flex;flex-direction:column;gap:2px"><span style="font-size:11px;color:var(--color-neutral-500)">Agency out</span><span>{{ t.agencyOut }}</span></div>
+                <div style="display:flex;flex-direction:column;gap:2px"><span style="font-size:11px;color:var(--color-neutral-500)">Viewers</span><span>{{ t.viewers }}</span></div>
+              </div>
+              <sc-if value="{{ t.isBattle }}">
+                <div style="display:flex;flex-direction:column;gap:6px">
+                  <div style="display:flex;justify-content:space-between;font-size:12px;font-feature-settings:'tnum' 1"><span style="color:var(--color-accent-300)">{{ t.usScore }}</span><span style="color:var(--color-neutral-500)">{{ t.status }} · {{ t.elapsed }}</span><span style="color:var(--color-neutral-400)">{{ t.themScore }} {{ t.opponent }}</span></div>
+                  <div style="display:flex;height:6px;border-radius:3px;overflow:hidden;gap:2px"><span style="width:{{ t.usPct }};background:var(--color-accent-500);transition:width .4s"></span><span style="flex:1;background:var(--color-neutral-700)"></span></div>
+                </div>
+              </sc-if>
+              <sc-if value="{{ t.isStream }}">
+                <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--color-neutral-500)"><span>Agency share of volume {{ t.share }}</span><span style="white-space:nowrap">{{ t.elapsed }} live</span></div>
+              </sc-if>
+              </sc-if>
+            </div>
+          </sc-for>
+          <sc-if value="{{ noTargets }}">
+            <div class="card" style="padding:var(--space-8);align-items:flex-start;gap:var(--space-4)">
+              <div class="card-title">No streams tracked</div>
+              <p class="card-body">Add any live stream or battle to watch its coin spikes in real time.</p>
+              <button class="btn btn-primary" onClick="{{ openAdd }}"><i class="ph ph-crosshair"></i>Add target stream</button>
+            </div>
+          </sc-if>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:var(--space-6);min-width:0">
+        <div class="card elev-sm" style="padding:var(--space-6);gap:var(--space-4)">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+            <div style="display:flex;flex-direction:column;gap:2px"><div class="card-title">Discover live</div><span style="font-size:11px;color:var(--color-neutral-500);font-family:ui-monospace, monospace">get_live_feed</span></div>
+            <div style="display:flex;gap:6px;align-items:center">
+              <select class="input" style="width:auto;min-height:30px;padding-block:3px;font-size:13px" value="{{ disc.region }}" onChange="{{ disc.onRegion }}"><sc-for list="{{ disc.regions }}" as="r"><option value="{{ r }}">{{ r }}</option></sc-for></select>
+              <button class="btn btn-secondary btn-icon" style="width:30px;height:30px" onClick="{{ disc.refresh }}" title="New sample"><i class="ph ph-arrows-clockwise"></i></button>
+            </div>
+          </div>
+          <sc-if value="{{ disc.loading }}"><div style="color:var(--color-neutral-500);padding:var(--space-3) 0">Sampling live rooms…</div></sc-if>
+          <sc-if value="{{ disc.err }}"><div style="color:var(--color-neutral-400);padding:var(--space-3) 0">{{ disc.err }}</div></sc-if>
+          <sc-if value="{{ disc.ready }}">
+            <div style="display:flex;flex-direction:column">
+              <sc-for list="{{ disc.rooms }}" as="r">
+                <div style="display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:var(--space-4);align-items:center;padding:8px 0;box-shadow:inset 0 -1px 0 color-mix(in srgb, var(--color-text) 6%, transparent)">
+                  <div style="display:flex;flex-direction:column;gap:2px;min-width:0"><span style="display:flex;align-items:center;gap:6px">{{ r.handle }}<sc-if value="{{ r.isRoster }}"><span class="tag tag-accent" style="padding:1px 7px">Roster</span></sc-if></span><span style="font-size:12px;color:var(--color-neutral-500);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ r.title }}</span></div>
+                  <span style="font-size:12px;color:var(--color-neutral-400);font-feature-settings:'tnum' 1;display:flex;align-items:center;gap:4px"><i class="ph ph-eye"></i>{{ r.viewers }}</span>
+                  <sc-if value="{{ r.canTrack }}"><button class="btn btn-ghost" onClick="{{ r.onTrack }}">Track</button></sc-if>
+                  <sc-if value="{{ r.tracked }}"><span style="font-size:12px;color:var(--color-neutral-500);padding:0 var(--space-1)">Tracking</span></sc-if>
+                </div>
+              </sc-for>
+            </div>
+          </sc-if>
+        </div>
+        <div class="card elev-sm" style="padding:var(--space-6);gap:var(--space-4)">
+          <div style="display:flex;justify-content:space-between;align-items:baseline"><div class="card-title">Coin volume leaders</div><span style="font-size:12px;color:var(--color-neutral-500)">Across tracked streams</span></div>
+          <div style="display:flex;flex-direction:column;gap:2px">
+            <sc-for list="{{ leaders }}" as="l" hint-placeholder-count="6">
+              <div style="display:grid;grid-template-columns:20px minmax(0,1fr) auto;gap:var(--space-4);align-items:center;padding:8px 0">
+                <span style="font-size:12px;color:var(--color-neutral-500);font-feature-settings:'tnum' 1">{{ l.rank }}</span>
+                <span style="display:flex;flex-direction:column;gap:6px;min-width:0">
+                  <span style="display:flex;align-items:center;gap:8px">{{ l.handle }}<sc-if value="{{ l.agency }}"><span class="tag tag-accent" style="padding:1px 7px">Agency</span></sc-if></span>
+                  <span style="height:4px;border-radius:2px;background:var(--color-neutral-900)"><span style="display:block;height:100%;width:{{ l.bar }};border-radius:2px;background:{{ l.barColor }};transition:width .4s"></span></span>
+                </span>
+                <span style="font-feature-settings:'tnum' 1;color:var(--color-neutral-200)">{{ l.value }}</span>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+        </div>
+      </section>
+    </sc-if>
+
+    <sc-if value="{{ isRankings }}">
+      <section style="display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-3)">
+        <select class="input" style="width:auto;min-height:32px;padding-block:4px" value="{{ rk.region }}" onChange="{{ rk.onRegion }}"><sc-for list="{{ rk.regions }}" as="r"><option value="{{ r.v }}">{{ r.label }}</option></sc-for></select>
+        <div class="seg"><sc-for list="{{ rk.rankOpts }}" as="o" hint-placeholder-count="4"><label class="seg-opt" style="padding:6px 10px"><input type="radio" name="tn-rank" checked="{{ o.checked }}" disabled="{{ o.disabled }}" onChange="{{ o.on }}">{{ o.label }}</label></sc-for></div>
+        <sc-if value="{{ rk.isLeague }}"><select class="input" style="width:auto;min-height:32px;padding-block:4px" value="{{ rk.league }}" onChange="{{ rk.onLeague }}"><sc-for list="{{ rk.leagues }}" as="l"><option value="{{ l }}">League {{ l }}</option></sc-for></select></sc-if>
+        <input class="input" type="date" style="width:auto;min-height:32px;padding-block:4px;color-scheme:dark" value="{{ rk.date }}" onChange="{{ rk.onDate }}">
+        <sc-if value="{{ rk.hasDate }}"><button class="btn btn-ghost" onClick="{{ rk.clearDate }}">Latest</button></sc-if>
+        <span style="margin-left:auto;color:var(--color-neutral-400);font-feature-settings:'tnum' 1">{{ rk.summary }}</span>
+      </section>
+      <sc-if value="{{ rk.hasRoster }}"><div style="display:flex;gap:8px;align-items:baseline;color:var(--color-neutral-200)"><i class="ph ph-shield-star" style="color:var(--color-accent)"></i>{{ rk.rosterNote }}</div></sc-if>
+      <sc-if value="{{ rk.noRoster }}"><div style="color:var(--color-neutral-400)">None of your creators are on this board.</div></sc-if>
+      <div class="card elev-sm" style="padding:var(--space-3) var(--space-6)">
+        <sc-if value="{{ rk.idle }}"><div style="padding:var(--space-8) 0"><button class="btn btn-primary" onClick="{{ rk.retry }}"><i class="ph ph-ranking"></i>Load rankings</button></div></sc-if>
+        <sc-if value="{{ rk.loading }}" hint-placeholder-val="{{ true }}"><div style="padding:var(--space-8) 0;color:var(--color-neutral-400)">Fetching <span style="font-family:ui-monospace, monospace">rankings-get_leaderboard</span>…</div></sc-if>
+        <sc-if value="{{ rk.err }}"><div style="padding:var(--space-8) 0;display:flex;align-items:center;gap:var(--space-4);color:var(--color-neutral-300)">{{ rk.err }}<button class="btn btn-secondary" onClick="{{ rk.retry }}">Retry</button></div></sc-if>
+        <sc-if value="{{ rk.ready }}">
+          <div style="overflow-x:auto">
+            <table class="table" style="font-feature-settings:'tnum' 1;min-width:560px">
+              <thead><tr><th style="width:64px">Rank</th><th>Creator</th><th style="text-align:right">Score</th><th style="width:120px"></th></tr></thead>
+              <tbody>
+                <sc-for list="{{ rk.rows }}" as="r">
+                  <tr>
+                    <td style="color:{{ r.rankColor }}">#{{ r.rank }}</td>
+                    <td><div style="display:flex;align-items:center;gap:8px"><div style="display:flex;flex-direction:column;gap:1px"><span>{{ r.handle }}</span><span style="font-size:12px;color:var(--color-neutral-500)">{{ r.nickname }}</span></div><sc-if value="{{ r.isRoster }}"><span class="tag tag-accent">Your roster</span></sc-if></div></td>
+                    <td style="text-align:right">{{ r.score }}</td>
+                    <td style="text-align:right"><sc-if value="{{ r.canTrack }}"><button class="btn btn-ghost" onClick="{{ r.onTrack }}"><i class="ph ph-crosshair"></i>Track</button></sc-if><sc-if value="{{ r.tracked }}"><span style="font-size:12px;color:var(--color-neutral-500)">Tracking</span></sc-if></td>
+                  </tr>
+                </sc-for>
+              </tbody>
+            </table>
+          </div>
+        </sc-if>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ isTeam }}">
+      <section style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:var(--space-4)">
+        <div style="color:var(--color-neutral-400)">{{ teamSummary }}</div>
+        <button class="btn btn-primary" onClick="{{ openInvite }}"><i class="ph ph-user-plus"></i>Invite member</button>
+      </section>
+      <div class="card elev-sm" style="padding:var(--space-3) var(--space-6)">
+        <div style="overflow-x:auto">
+          <table class="table" style="min-width:720px">
+            <thead><tr><th>Member</th><th>Role</th><th>Roster scope</th><th style="text-align:right">Creators</th><th>Last active</th><th></th></tr></thead>
+            <tbody>
+              <sc-for list="{{ members }}" as="m" hint-placeholder-count="5">
+                <tr>
+                  <td><div style="display:flex;flex-direction:column;gap:2px"><span>{{ m.name }}</span><span style="font-size:12px;color:var(--color-neutral-500)">{{ m.email }}</span></div></td>
+                  <td>
+                    <sc-if value="{{ m.isFounder }}"><span class="tag tag-accent">Founder</span></sc-if>
+                    <sc-if value="{{ m.notFounder }}">
+                      <select class="input" style="width:auto;min-height:30px;padding-block:3px;font-size:13px" value="{{ m.role }}" onChange="{{ m.onRole }}"><option value="Manager">Manager</option><option value="Moderator">Moderator</option></select>
+                    </sc-if>
+                  </td>
+                  <td>
+                    <sc-if value="{{ m.isFounder }}"><span style="color:var(--color-neutral-300)">All teams</span></sc-if>
+                    <sc-if value="{{ m.notFounder }}">
+                      <select class="input" style="width:auto;min-height:30px;padding-block:3px;font-size:13px" value="{{ m.team }}" onChange="{{ m.onTeam }}"><option value="Team Nova">Team Nova</option><option value="Team Atlas">Team Atlas</option><option value="Team Echo">Team Echo</option></select>
+                    </sc-if>
+                  </td>
+                  <td style="text-align:right;font-feature-settings:'tnum' 1">{{ m.creators }}</td>
+                  <td style="color:var(--color-neutral-400)">{{ m.last }}</td>
+                  <td style="text-align:right"><sc-if value="{{ m.notFounder }}"><button class="btn btn-ghost" onClick="{{ m.onRemove }}" style="color:var(--color-neutral-400)">Remove</button></sc-if></td>
+                </tr>
+              </sc-for>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <section style="display:grid;grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));gap:var(--space-6)">
+        <sc-for list="{{ roles }}" as="r" hint-placeholder-count="3">
+          <div class="card" style="padding:var(--space-6);gap:var(--space-3);background:color-mix(in srgb, var(--color-surface) 60%, transparent);box-shadow:var(--shadow-sm)">
+            <div style="display:flex;align-items:center;gap:8px"><i class="ph {{ r.icon }}" style="font-size:18px;color:var(--color-accent)"></i><span class="card-title" style="font-size:15px">{{ r.name }}</span></div>
+            <p class="card-body" style="margin:0">{{ r.desc }}</p>
+          </div>
+        </sc-for>
+      </section>
+    </sc-if>
+
+    <sc-if value="{{ isSource }}">
+      <sc-if value="{{ src.onboard.show }}">
+        <section class="card elev-sm" style="padding:var(--space-6);gap:var(--space-6)">
+          <div style="display:flex;justify-content:space-between;align-items:baseline;gap:var(--space-4);flex-wrap:wrap"><div style="display:flex;flex-direction:column;gap:2px"><span class="card-kicker">Get started</span><span class="card-title">Set up Euler Stream</span></div><span style="font-size:12px;color:var(--color-neutral-500)">{{ src.onboard.left }}</span></div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));gap:var(--space-6)">
+            <sc-for list="{{ src.onboard.steps }}" as="st" hint-placeholder-count="3">
+              <div style="display:flex;gap:var(--space-4);align-items:flex-start">
+                <span style="width:28px;height:28px;flex:none;border-radius:50%;display:grid;place-items:center;background:{{ st.dotBg }};box-shadow:{{ st.dotRing }};color:{{ st.dotColor }};font-size:13px;font-feature-settings:'tnum' 1"><sc-if value="{{ st.done }}"><i class="ph ph-check"></i></sc-if><sc-if value="{{ st.notDone }}" hint-placeholder-val="{{ true }}">{{ st.n }}</sc-if></span>
+                <div style="display:flex;flex-direction:column;gap:4px;min-width:0">
+                  <span style="font-size:15px">{{ st.title }}</span>
+                  <span style="font-size:13px;color:var(--color-neutral-400);line-height:1.5">{{ st.body }}</span>
+                  <sc-if value="{{ st.hasLink }}"><a href="{{ st.link }}" target="_blank" rel="noopener" style="font-size:13px;display:inline-flex;align-items:center;gap:4px">{{ st.linkLabel }}<i class="ph ph-arrow-up-right"></i></a></sc-if>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+        </section>
+      </sc-if>
+      <section style="display:grid;grid-template-columns:repeat(auto-fit, minmax(min(100%, 420px), 1fr));gap:var(--space-6);align-items:start">
+        <div class="card elev-sm" style="padding:var(--space-6);gap:var(--space-6)">
+          <div style="display:flex;flex-direction:column;gap:4px"><span class="card-kicker">Connection</span><span class="card-title">Euler Stream for Northlight Agency</span></div>
+          <div class="field">
+            <label>Authentication mode</label>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-3)">
+              <sc-for list="{{ src.modes }}" as="m" hint-placeholder-count="2">
+                <label class="seg-opt" style="flex-direction:column;align-items:flex-start;gap:2px;padding:10px 12px;border:1px solid var(--color-divider);border-radius:var(--radius-md);opacity:{{ m.opacity }}">
+                  <input type="radio" name="tn-mode" checked="{{ m.checked }}" disabled="{{ m.disabled }}" onChange="{{ m.on }}">
+                  <span style="display:flex;align-items:center;gap:6px;font-size:14px">{{ m.label }}<sc-if value="{{ m.locked }}"><i class="ph ph-lock-simple" style="color:var(--color-neutral-500)"></i></sc-if></span>
+                  <span style="font-size:11px;color:var(--color-neutral-500)">{{ m.sub }}</span>
+                </label>
+              </sc-for>
+            </div>
+            <div style="font-size:12px;color:var(--color-neutral-400);margin-top:8px;line-height:1.5">
+              <sc-if value="{{ src.isOauth }}" hint-placeholder-val="{{ true }}">Tools use an x-oauth-token from the Euler OAuth flow. x-cookie-header is ignored.</sc-if>
+              <sc-if value="{{ src.isCookie }}">Tools use raw TikTok cookies passed as x-cookie-header. No login flow. x-oauth-token is ignored.</sc-if>
+              Mode is set at connection time, so switching ends the current session.
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(180px, 1fr));gap:var(--space-4)">
+            <div class="field"><label>Server host</label><input class="input" value="{{ src.host }}" onChange="{{ src.onHost }}" readOnly="{{ src.notAdmin }}" placeholder="&lt;host&gt;"><sc-if value="{{ src.errHost }}"><div style="font-size:12px;color:var(--color-accent-300);margin-top:4px">{{ src.errHost }}</div></sc-if></div>
+            <div class="field"><label style="display:flex;align-items:center;gap:6px">API key<sc-if value="{{ src.notAdmin }}"><i class="ph ph-lock-simple"></i></sc-if></label><input class="input" type="password" value="{{ src.apiKey }}" onChange="{{ src.onKey }}" readOnly="{{ src.notAdmin }}" style="font-family:ui-monospace, monospace;font-size:13px"><sc-if value="{{ src.errKey }}"><div style="font-size:12px;color:var(--color-accent-300);margin-top:4px">{{ src.errKey }}</div></sc-if></div>
+          </div>
+          <sc-if value="{{ src.isOauth }}" hint-placeholder-val="{{ true }}">
+            <div class="field"><label>Pinned user ID (optional)</label><input class="input" value="{{ src.pinned }}" onChange="{{ src.onPinned }}" placeholder="e.g. 6779789250017592326" style="font-family:ui-monospace, monospace;font-size:13px"><div style="font-size:12px;color:var(--color-neutral-500);margin-top:4px">Selects a cached TikTok session and skips the account picker. If none is found, the normal flow continues.</div></div>
+            <div style="display:flex;flex-direction:column;gap:6px;font-size:13px">
+              <div style="display:flex;justify-content:space-between;gap:8px;padding:8px 10px;border-radius:var(--radius-md);box-shadow:var(--shadow-sm)"><span style="font-family:ui-monospace, monospace">x-oauth-token</span><span style="color:var(--color-neutral-300)">Issued by OAuth flow</span></div>
+              <div style="display:flex;justify-content:space-between;gap:8px;padding:8px 10px;border-radius:var(--radius-md);box-shadow:var(--shadow-sm);color:var(--color-neutral-500)"><span style="font-family:ui-monospace, monospace;display:flex;align-items:center;gap:6px"><i class="ph ph-lock-simple"></i>x-cookie-header</span><span>Not accepted in OAuth mode</span></div>
+            </div>
+          </sc-if>
+          <sc-if value="{{ src.cookieEditable }}">
+            <div class="field"><label>x-cookie-header</label><textarea class="input" value="{{ src.cookie }}" onChange="{{ src.onCookie }}" placeholder="sessionid=…; tt_csrf_token=…" style="font-family:ui-monospace, monospace;font-size:12px"></textarea><sc-if value="{{ src.errCookie }}"><div style="font-size:12px;color:var(--color-accent-300);margin-top:4px">{{ src.errCookie }}</div></sc-if></div>
+            <div style="display:flex;justify-content:space-between;gap:8px;padding:8px 10px;border-radius:var(--radius-md);box-shadow:var(--shadow-sm);color:var(--color-neutral-500);font-size:13px"><span style="font-family:ui-monospace, monospace;display:flex;align-items:center;gap:6px"><i class="ph ph-lock-simple"></i>x-oauth-token</span><span>Not accepted in Cookie mode</span></div>
+          </sc-if>
+          <sc-if value="{{ src.cookieLocked }}">
+            <div style="display:flex;gap:8px;padding:10px 12px;border-radius:var(--radius-md);box-shadow:var(--shadow-sm);font-size:13px;color:var(--color-neutral-300)"><i class="ph ph-lock-simple" style="margin-top:2px"></i>Cookie credentials are only visible to Founders.</div>
+          </sc-if>
+          <sc-if value="{{ src.notAdmin }}">
+            <div style="font-size:12px;color:var(--color-neutral-500)">Only Founders and agency admins can change the host, API key or Cookie mode.</div>
+          </sc-if>
+          <div style="display:flex;flex-wrap:wrap;gap:var(--space-3)">
+            <sc-if value="{{ src.idle }}" hint-placeholder-val="{{ false }}"><button class="btn btn-primary" onClick="{{ src.connect }}"><i class="ph ph-plugs-connected"></i>{{ src.connectLabel }}</button></sc-if>
+            <sc-if value="{{ src.authorizing }}"><button class="btn btn-primary" disabled=""><i class="ph ph-spinner"></i>Authorizing…</button></sc-if>
+            <sc-if value="{{ src.connected }}" hint-placeholder-val="{{ true }}">
+              <button class="btn btn-secondary" onClick="{{ src.test }}"><i class="ph ph-pulse"></i>Test connection</button>
+              <sc-if value="{{ src.isAdmin }}"><button class="btn btn-secondary" onClick="{{ src.disconnect }}"><i class="ph ph-plugs"></i>Disconnect</button></sc-if>
+            </sc-if>
+          </div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:var(--space-6);min-width:0">
+          <div class="card elev-sm" style="padding:var(--space-6);gap:var(--space-4)">
+            <div style="display:flex;align-items:center;gap:10px"><span style="width:10px;height:10px;border-radius:50%;background:{{ src.dot }};animation:{{ src.anim }}"></span><span style="font-size:20px;font-family:var(--font-heading);font-weight:500">{{ src.statusLabel }}</span><span class="tag tag-neutral">{{ src.modeLabel }} mode</span></div>
+            <div style="display:grid;grid-template-columns:repeat(2, 1fr);gap:var(--space-4) var(--space-6);font-feature-settings:'tnum' 1">
+              <div style="display:flex;flex-direction:column;gap:2px"><span style="font-size:11px;color:var(--color-neutral-500)">Session</span><span>{{ src.account }}</span></div>
+              <div style="display:flex;flex-direction:column;gap:2px"><span style="font-size:11px;color:var(--color-neutral-500)">Connected for</span><span>{{ src.sinceLabel }}</span></div>
+              <div style="display:flex;flex-direction:column;gap:2px"><span style="font-size:11px;color:var(--color-neutral-500)">Events ingested</span><span>{{ src.events }}</span></div>
+              <div style="display:flex;flex-direction:column;gap:2px"><span style="font-size:11px;color:var(--color-neutral-500)">Last event</span><span>{{ src.last }}</span></div>
+            </div>
+          </div>
+          <div class="card elev-sm" style="padding:var(--space-6);gap:var(--space-3);min-width:0">
+            <div style="display:flex;justify-content:space-between;align-items:center"><span class="card-title" style="font-size:15px">Endpoint URL</span><button class="btn btn-ghost" onClick="{{ src.copyUrl }}"><i class="ph ph-copy"></i>Copy</button></div>
+            <code style="display:block;padding:10px 12px;border-radius:var(--radius-md);background:var(--color-bg);font-family:ui-monospace, monospace;font-size:12px;color:var(--color-accent-300);overflow-wrap:anywhere">{{ src.url }}</code>
+          </div>
+          <div class="card elev-sm" style="padding:var(--space-6);gap:var(--space-3);min-width:0">
+            <div style="display:flex;justify-content:space-between;align-items:center"><span class="card-title" style="font-size:15px">MCP client config</span><div style="display:flex;align-items:center;gap:var(--space-2)"><div class="seg"><sc-for list="{{ src.cfgOpts }}" as="o" hint-placeholder-count="2"><label class="seg-opt" style="padding:4px 9px;font-size:12px"><input type="radio" name="tn-cfg" checked="{{ o.checked }}" onChange="{{ o.on }}">{{ o.label }}</label></sc-for></div><button class="btn btn-ghost" onClick="{{ src.copyConfig }}"><i class="ph ph-copy"></i>Copy</button></div></div>
+            <pre style="margin:0;padding:10px 12px;border-radius:var(--radius-md);background:var(--color-bg);font-family:ui-monospace, monospace;font-size:12px;line-height:1.55;color:var(--color-neutral-200);overflow-x:auto">{{ src.configJson }}</pre>
+            <span style="font-size:12px;color:var(--color-neutral-500)">For Claude Desktop, Cursor and other MCP clients. Replace YOUR_API_KEY with your key.</span>
+          </div>
+          <div class="card elev-sm" style="padding:var(--space-6);gap:var(--space-4);min-width:0">
+            <div style="display:flex;justify-content:space-between;align-items:baseline"><span class="card-title" style="font-size:15px">Tools in use</span><span style="font-size:12px;color:var(--color-neutral-500)">{{ src.toolCount }} MCP tools</span></div>
+            <sc-for list="{{ src.toolGroups }}" as="g" hint-placeholder-count="4">
+              <div style="display:flex;flex-direction:column;gap:6px">
+                <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:12px;color:var(--color-neutral-300)">{{ g.name }}<span style="color:var(--color-neutral-500)">used in {{ g.where }}</span><sc-if value="{{ g.auth }}"><span class="tag tag-neutral" style="padding:1px 7px">Needs {{ g.header }}</span></sc-if></div>
+                <div style="display:flex;flex-wrap:wrap;gap:4px"><sc-for list="{{ g.tools }}" as="t"><code style="font-family:ui-monospace, monospace;font-size:11px;padding:2px 6px;border-radius:var(--radius-sm);background:var(--color-bg);color:var(--color-neutral-200)">{{ t }}</code></sc-for></div>
+              </div>
+            </sc-for>
+          </div>
+          <div class="card elev-sm" style="padding:var(--space-6);gap:var(--space-3);min-width:0">
+            <span class="card-title" style="font-size:15px">Recent tool calls</span>
+            <sc-if value="{{ src.noCalls }}"><span style="color:var(--color-neutral-500)">No calls yet this session. Look up a creator, open Rankings or moderate a room.</span></sc-if>
+            <sc-for list="{{ src.calls }}" as="k">
+              <div style="display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:var(--space-3);align-items:start;padding:6px 0;box-shadow:inset 0 -1px 0 color-mix(in srgb, var(--color-text) 6%, transparent)">
+                <i class="ph {{ k.icon }}" style="color:{{ k.color }};margin-top:2px"></i>
+                <div style="display:flex;flex-direction:column;gap:2px;min-width:0"><span style="font-family:ui-monospace, monospace;font-size:12px">{{ k.tool }}</span><span style="font-family:ui-monospace, monospace;font-size:11px;color:var(--color-neutral-500);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ k.args }}</span><sc-if value="{{ k.hasAuth }}"><span style="font-size:11px;color:var(--color-neutral-500)">auth via {{ k.auth }}</span></sc-if></div>
+                <span style="font-size:11px;color:var(--color-neutral-500);font-feature-settings:'tnum' 1">{{ k.ms }}</span>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </section>
+      <section style="display:flex;flex-direction:column;gap:var(--space-4)">
+        <div style="display:flex;flex-direction:column;gap:2px"><h2 style="font-size:20px;margin:0">Live ingestion</h2><span style="color:var(--color-neutral-400)">Live events arrive over Euler's hosted WebSocket, one socket per target. The SDK prices gifts and mints JWTs.</span></div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(min(100%, 420px), 1fr));gap:var(--space-6);align-items:start">
+          <div class="card elev-sm" style="padding:var(--space-6);gap:var(--space-4);min-width:0">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+              <div style="display:flex;flex-direction:column;gap:2px"><span class="card-title" style="font-size:15px">Gift catalog</span><span style="font-size:11px;color:var(--color-neutral-500);font-family:ui-monospace, monospace">client.gifts.listWebcastGifts()</span></div>
+              <button class="btn btn-secondary" onClick="{{ src.g.sync }}" disabled="{{ src.g.loading }}"><i class="ph ph-arrows-clockwise"></i>Resync</button>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:var(--space-4);flex-wrap:wrap">
+              <input class="input" style="max-width:220px;min-height:32px" placeholder="Filter gifts" value="{{ src.g.q }}" onChange="{{ src.g.onQ }}">
+              <span style="font-size:12px;color:var(--color-neutral-500)">{{ src.g.summary }}</span>
+            </div>
+            <sc-if value="{{ src.g.loading }}"><div style="color:var(--color-neutral-500)">Syncing catalog…</div></sc-if>
+            <sc-if value="{{ src.g.err }}"><div style="color:var(--color-neutral-400)">{{ src.g.err }}</div></sc-if>
+            <sc-if value="{{ src.g.ready }}">
+              <div style="max-height:320px;overflow-y:auto">
+                <table class="table" style="font-feature-settings:'tnum' 1">
+                  <thead><tr><th>Gift</th><th style="text-align:right">Coins</th><th style="text-align:right">Cost</th><th style="text-align:right">Ledger</th></tr></thead>
+                  <tbody><sc-for list="{{ src.g.rows }}" as="x"><tr><td><div style="display:flex;flex-direction:column"><span>{{ x.name }}</span><span style="font-size:11px;color:var(--color-neutral-500);font-family:ui-monospace, monospace">id {{ x.id }}</span></div></td><td style="text-align:right">{{ x.coins }}</td><td style="text-align:right;color:var(--color-neutral-300)">{{ x.usd }}</td><td style="text-align:right"><sc-if value="{{ x.isUsed }}"><span class="tag tag-accent">{{ x.used }}</span></sc-if></td></tr></sc-for></tbody>
+                </table>
+              </div>
+            </sc-if>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:var(--space-6);min-width:0">
+            <div class="card elev-sm" style="padding:var(--space-6);gap:var(--space-3)">
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+                <div style="display:flex;flex-direction:column;gap:2px"><span class="card-title" style="font-size:15px">Webcast sockets</span><span style="font-size:11px;color:var(--color-neutral-500);font-family:ui-monospace, monospace">wss://ws.eulerstream.com · one per live target</span></div>
+              </div>
+              <sc-for list="{{ src.sockets }}" as="k">
+                <div style="display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:var(--space-3);align-items:center;padding:6px 0;box-shadow:inset 0 -1px 0 color-mix(in srgb, var(--color-text) 6%, transparent)">
+                  <span style="width:7px;height:7px;border-radius:50%;background:{{ k.dot }}"></span>
+                  <span style="display:flex;flex-direction:column;min-width:0"><span>{{ k.handle }}</span><span style="font-size:12px;color:var(--color-neutral-500)">{{ k.status }}</span></span>
+                  <span style="font-size:12px;color:var(--color-neutral-400);font-feature-settings:'tnum' 1">{{ k.events }}</span>
+                </div>
+              </sc-for>
+              <sc-if value="{{ src.noSockets }}"><span style="color:var(--color-neutral-500)">No tracked targets. Add one in Live targets to open a socket.</span></sc-if>
+            </div>
+            <div class="card elev-sm" style="padding:var(--space-6);gap:var(--space-3);min-width:0">
+              <div style="display:flex;justify-content:space-between;align-items:center"><span class="card-title" style="font-size:15px">Backend snippet</span><button class="btn btn-ghost" onClick="{{ copySnippet }}"><i class="ph ph-copy"></i>Copy</button></div>
+              <div class="seg" style="align-self:flex-start;flex-wrap:wrap"><sc-for list="{{ src.snipOpts }}" as="o" hint-placeholder-count="2"><label class="seg-opt" style="padding:4px 9px;font-size:12px;font-family:ui-monospace, monospace"><input type="radio" name="tn-snip" checked="{{ o.checked }}" onChange="{{ o.on }}">{{ o.label }}</label></sc-for></div>
+              <sc-if value="{{ src.isSdk }}"><div class="seg" style="align-self:flex-start;flex-wrap:wrap"><sc-for list="{{ src.langOpts }}" as="o"><label class="seg-opt" style="padding:4px 9px;font-size:12px"><input type="radio" name="tn-lang" checked="{{ o.checked }}" onChange="{{ o.on }}">{{ o.label }}</label></sc-for></div></sc-if>
+              <pre style="margin:0;padding:10px 12px;border-radius:var(--radius-md);background:var(--color-bg);font-family:ui-monospace, monospace;font-size:12px;line-height:1.55;color:var(--color-neutral-200);overflow-x:auto">{{ src.snippet }}</pre>
+              <span style="font-size:12px;color:var(--color-neutral-500)">Keep the API key server-side. Browsers connect with a short-lived JWT scoped to one creator.</span>
+            </div>
+            <div class="card elev-sm" style="padding:var(--space-6);gap:var(--space-3);min-width:0">
+              <div style="display:flex;flex-direction:column;gap:2px"><span class="card-title" style="font-size:15px">Close codes</span><span style="font-size:12px;color:var(--color-neutral-500)">How TokNomics handles each socket close</span></div>
+              <div style="display:flex;flex-direction:column">
+                <sc-for list="{{ src.closeCodes }}" as="c" hint-placeholder-count="6">
+                  <div style="display:grid;grid-template-columns:44px minmax(0,1fr);gap:var(--space-3);padding:6px 0;box-shadow:inset 0 -1px 0 color-mix(in srgb, var(--color-text) 6%, transparent)">
+                    <span style="font-family:ui-monospace, monospace;font-size:12px;color:var(--color-accent-300)">{{ c.code }}</span>
+                    <div style="display:flex;flex-direction:column;gap:1px;min-width:0"><span style="font-family:ui-monospace, monospace;font-size:11px;color:var(--color-neutral-400)">{{ c.name }}</span><span style="font-size:13px;color:var(--color-neutral-200)">{{ c.action }}</span></div>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </sc-if>
+
+    <sc-if value="{{ isBilling }}">
+      <section style="display:grid;grid-template-columns:repeat(auto-fit, minmax(min(100%, 340px), 1fr));gap:var(--space-6)">
+        <div class="card elev-sm" style="padding:var(--space-6);gap:var(--space-4)">
+          <span class="card-kicker">Current plan</span>
+          <div style="display:flex;align-items:baseline;justify-content:space-between;gap:var(--space-4);flex-wrap:wrap">
+            <span style="font-size:24px;font-family:var(--font-heading);font-weight:500;letter-spacing:-0.015em">{{ plan.name }}</span>
+            <span style="font-feature-settings:'tnum' 1"><span style="font-size:20px">{{ plan.price }}</span><span style="color:var(--color-neutral-500)"> / month</span></span>
+          </div>
+          <div style="color:var(--color-neutral-400)">Renews Nov 1, 2026</div>
+        </div>
+        <div class="card elev-sm" style="padding:var(--space-6);gap:var(--space-6)">
+          <span class="card-kicker">Usage</span>
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <div style="display:flex;justify-content:space-between"><span>Creators tracked</span><span style="font-feature-settings:'tnum' 1;color:var(--color-neutral-300)">{{ usage.creators }}</span></div>
+            <div style="height:6px;border-radius:3px;background:var(--color-neutral-900)"><span style="display:block;height:100%;width:{{ usage.creatorPct }};border-radius:3px;background:var(--color-accent-500)"></span></div>
+          </div>
+          <div style="display:flex;justify-content:space-between"><span>Team seats</span><span style="font-feature-settings:'tnum' 1;color:var(--color-neutral-300)">{{ usage.seats }}</span></div>
+        </div>
+      </section>
+      <section style="display:grid;grid-template-columns:repeat(auto-fit, minmax(260px, 1fr));gap:var(--space-6)">
+        <sc-for list="{{ tiers }}" as="t" hint-placeholder-count="3">
+          <div class="card" style="padding:var(--space-6);gap:var(--space-6);box-shadow:{{ t.shadow }}">
+            <div style="display:flex;flex-direction:column;gap:4px">
+              <div style="display:flex;justify-content:space-between;align-items:center"><span class="card-title">{{ t.name }}</span><sc-if value="{{ t.current }}"><span class="tag tag-outline">Current</span></sc-if></div>
+              <span style="font-size:13px;color:var(--color-neutral-400)">{{ t.who }}</span>
+            </div>
+            <div><span style="font-size:28px;font-family:var(--font-heading);font-weight:500;letter-spacing:-0.02em;font-feature-settings:'tnum' 1">{{ t.price }}</span><span style="color:var(--color-neutral-500)"> / month</span></div>
+            <ul style="list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px;flex:1">
+              <sc-for list="{{ t.feats }}" as="f"><li style="display:flex;gap:8px;align-items:baseline;color:var(--color-neutral-200)"><i class="ph ph-check" style="color:var(--color-accent);flex:none"></i>{{ f }}</li></sc-for>
+            </ul>
+            <sc-if value="{{ t.notCurrent }}"><button class="btn btn-secondary btn-block" onClick="{{ t.onPick }}">Switch to {{ t.short }}</button></sc-if>
+            <sc-if value="{{ t.current }}"><button class="btn btn-block" disabled="" style="border-color:var(--color-divider)">Your plan</button></sc-if>
+          </div>
+        </sc-for>
+      </section>
+    </sc-if>
+  </main>
+
+  <sc-if value="{{ drawerOpen }}">
+    <div onClick="{{ closeDrawer }}" style="position:fixed;inset:0;z-index:40;background:color-mix(in srgb, var(--color-neutral-900) 55%, transparent)"></div>
+    <aside style="position:fixed;top:0;right:0;bottom:0;z-index:41;width:min(460px, 100%);overflow-y:auto;background:var(--color-surface);box-shadow:var(--shadow-lg);display:flex;flex-direction:column;gap:var(--space-8);padding:var(--space-8);animation:tn-in .25s ease-out">
+      <div style="display:flex;align-items:center;gap:var(--space-4)">
+        <span style="width:48px;height:48px;flex:none;border-radius:50%;display:grid;place-items:center;background:var(--color-accent-900);color:var(--color-accent-300);font-size:15px">{{ d.mono }}</span>
+        <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px"><span style="font-size:20px;font-family:var(--font-heading);font-weight:500">{{ d.handle }}</span><span style="font-size:12px;color:var(--color-neutral-500)">{{ d.team }} · {{ d.tier }} · {{ d.cut }} agency cut</span></div>
+        <button class="btn btn-icon" onClick="{{ closeDrawer }}" style="color:var(--color-neutral-400)" style-hover="background:color-mix(in srgb, var(--color-text) 7%, transparent)"><i class="ph ph-x" style="font-size:18px"></i></button>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(3, 1fr);gap:var(--space-4);font-feature-settings:'tnum' 1">
+        <div style="display:flex;flex-direction:column;gap:4px"><span class="card-kicker">Invested</span><span style="font-size:20px">{{ d.invest }}</span></div>
+        <div style="display:flex;flex-direction:column;gap:4px"><span class="card-kicker">Commission</span><span style="font-size:20px">{{ d.comm }}</span></div>
+        <div style="display:flex;flex-direction:column;gap:4px"><span class="card-kicker">Net</span><span style="font-size:20px;color:{{ d.netColor }}">{{ d.net }}</span></div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px;padding:var(--space-4);border-radius:var(--radius-md);box-shadow:var(--shadow-sm);font-feature-settings:'tnum' 1">
+        <span style="font-size:12px;color:var(--color-neutral-500)">Net profit, {{ rangeLabel }}</span>
+        <span style="font-size:13px;color:var(--color-neutral-300);line-height:1.6">({{ d.dmd }} diamonds × $0.005 × {{ d.cut }}) − {{ d.investUsd }} gifted = <span style="color:{{ d.netColor }}">{{ d.netUsd }}</span></span>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:var(--space-4)">
+        <span class="card-title" style="font-size:15px">Spend by purpose</span>
+        <sc-for list="{{ d.purposes }}" as="p">
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <div style="display:flex;justify-content:space-between;font-size:13px"><span style="color:var(--color-neutral-300)">{{ p.label }}</span><span style="font-feature-settings:'tnum' 1">{{ p.value }}</span></div>
+            <div style="height:4px;border-radius:2px;background:var(--color-neutral-900)"><span style="display:block;height:100%;width:{{ p.pct }};border-radius:2px;background:var(--color-accent-600)"></span></div>
+          </div>
+        </sc-for>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:var(--space-2)">
+        <span class="card-title" style="font-size:15px">Recent gifts</span>
+        <sc-for list="{{ d.recent }}" as="g">
+          <div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:var(--space-4);padding:8px 0;box-shadow:inset 0 -1px 0 color-mix(in srgb, var(--color-text) 6%, transparent)">
+            <div style="display:flex;flex-direction:column;gap:2px;min-width:0"><span>{{ g.gift }}</span><span style="font-size:12px;color:var(--color-neutral-500)">{{ g.sender }} · {{ g.time }} · {{ g.purpose }}</span></div>
+            <span style="font-feature-settings:'tnum' 1">{{ g.value }}</span>
+          </div>
+        </sc-for>
+        <sc-if value="{{ d.noRecent }}"><span style="color:var(--color-neutral-500)">No gifts in this range.</span></sc-if>
+      </div>
+    </aside>
+  </sc-if>
+
+  <sc-if value="{{ modOpen }}">
+    <div onClick="{{ closeMod }}" style="position:fixed;inset:0;z-index:40;background:color-mix(in srgb, var(--color-neutral-900) 55%, transparent)"></div>
+    <aside style="position:fixed;top:0;right:0;bottom:0;z-index:41;width:min(460px, 100%);overflow-y:auto;background:var(--color-surface);box-shadow:var(--shadow-lg);display:flex;flex-direction:column;gap:var(--space-8);padding:var(--space-8);animation:tn-in .25s ease-out">
+      <div style="display:flex;align-items:flex-start;gap:var(--space-4)">
+        <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:4px"><span class="card-kicker">Room moderation</span><span style="font-size:20px;font-family:var(--font-heading);font-weight:500">{{ mv.handle }}</span><span style="font-size:11px;color:var(--color-neutral-500);font-family:ui-monospace, monospace;overflow-wrap:anywhere">room_id {{ mv.roomId }} · anchor_id {{ mv.anchorId }}</span></div>
+        <button class="btn btn-icon" onClick="{{ closeMod }}" style="color:var(--color-neutral-400)" style-hover="background:color-mix(in srgb, var(--color-text) 7%, transparent)"><i class="ph ph-x" style="font-size:18px"></i></button>
+      </div>
+      <sc-if value="{{ mv.loading }}"><div style="color:var(--color-neutral-400)">Loading room state…</div></sc-if>
+      <sc-if value="{{ mv.failed }}"><div style="display:flex;align-items:center;gap:var(--space-4);color:var(--color-neutral-300)">{{ mv.error }}<button class="btn btn-secondary" onClick="{{ mv.retry }}">Retry</button></div></sc-if>
+      <sc-if value="{{ mv.ready }}">
+        <div style="display:flex;flex-direction:column;gap:var(--space-3)">
+          <div style="display:flex;flex-direction:column;gap:2px"><span class="card-title" style="font-size:15px;display:flex;align-items:center;gap:8px"><span style="width:7px;height:7px;border-radius:50%;background:var(--color-accent-400);animation:tn-pulse 1.6s ease-in-out infinite"></span>Live chat</span><span style="font-size:11px;color:var(--color-neutral-500);font-family:ui-monospace, monospace">WebcastEvent.CHAT · actions pass comment_msg_id</span></div>
+          <div style="display:flex;flex-direction:column;max-height:280px;overflow-y:auto">
+            <sc-for list="{{ mv.chat }}" as="c">
+              <div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:var(--space-3);align-items:center;padding:6px 0;box-shadow:inset 0 -1px 0 color-mix(in srgb, var(--color-text) 6%, transparent);animation:tn-in .3s ease-out">
+                <div style="display:flex;flex-direction:column;gap:1px;min-width:0"><span style="font-size:12px;color:var(--color-neutral-500)">{{ c.user }} · {{ c.ago }}<sc-if value="{{ c.flagged }}"> · <span style="color:var(--color-accent-300)">matches filter</span></sc-if></span><span style="color:{{ c.commentColor }}">{{ c.comment }}</span></div>
+                <sc-if value="{{ c.canAct }}"><div style="display:flex;gap:2px"><button class="btn btn-ghost" onClick="{{ c.mute }}" disabled="{{ c.busy }}" style="font-size:12px">Mute 5m</button><button class="btn btn-ghost" onClick="{{ c.kick }}" disabled="{{ c.busy }}" style="font-size:12px;color:var(--color-neutral-400)">Kick</button></div></sc-if>
+                <sc-if value="{{ c.gone }}"><span style="font-size:12px;color:var(--color-neutral-500)">{{ c.goneLabel }}</span></sc-if>
+              </div>
+            </sc-for>
+            <sc-if value="{{ mv.noChat }}"><span style="font-size:13px;color:var(--color-neutral-500)">Waiting for chat messages…</span></sc-if>
+          </div>
+        </div>
+
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:var(--space-4)">
+          <div style="display:flex;flex-direction:column;gap:2px"><span class="card-title" style="font-size:15px">{{ mv.commentsLabel }}</span><span style="font-size:11px;color:var(--color-neutral-500);font-family:ui-monospace, monospace">toggle_room_comments</span></div>
+          <button onClick="{{ mv.toggleComments }}" disabled="{{ mv.busy }}" style="width:38px;height:22px;flex:none;padding:3px;border:0;border-radius:11px;background:{{ mv.trackBg }};cursor:pointer;transition:background .2s"><span style="display:block;width:16px;height:16px;border-radius:50%;background:var(--color-neutral-100);transform:translateX({{ mv.knobX }});transition:transform .2s"></span></button>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:var(--space-3)">
+          <div style="display:flex;flex-direction:column;gap:2px"><span class="card-title" style="font-size:15px">Mute a viewer</span><span style="font-size:11px;color:var(--color-neutral-500);font-family:ui-monospace, monospace">mutes-mute_room_user · mutes-unmute_room_user</span></div>
+          <div style="display:flex;gap:var(--space-2)"><input class="input" placeholder="Numeric user ID" value="{{ mv.muteId }}" onChange="{{ mv.onMuteId }}" style="font-family:ui-monospace, monospace;font-size:13px"><button class="btn btn-secondary" style="flex:none" onClick="{{ mv.mute }}" disabled="{{ mv.busy }}">Mute</button></div>
+          <div class="seg" style="align-self:flex-start;flex-wrap:wrap"><sc-for list="{{ mv.durOpts }}" as="o"><label class="seg-opt" style="padding:5px 9px;font-size:12px"><input type="radio" name="tn-dur" checked="{{ o.checked }}" onChange="{{ o.on }}">{{ o.label }}</label></sc-for></div>
+          <sc-if value="{{ mv.errMute }}"><div style="font-size:12px;color:var(--color-accent-300)">{{ mv.errMute }}</div></sc-if>
+          <sc-for list="{{ mv.muted }}" as="u"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;box-shadow:inset 0 -1px 0 color-mix(in srgb, var(--color-text) 6%, transparent)"><div style="display:flex;flex-direction:column;min-width:0"><span>{{ u.label }}</span><span style="font-size:11px;color:var(--color-neutral-500);font-family:ui-monospace, monospace">{{ u.sub }}</span></div><button class="btn btn-ghost" onClick="{{ u.on }}" disabled="{{ u.busy }}">{{ u.action }}</button></div></sc-for>
+          <sc-if value="{{ mv.noMuted }}"><span style="font-size:13px;color:var(--color-neutral-500)">No one is muted.</span></sc-if>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:var(--space-3)">
+          <div style="display:flex;flex-direction:column;gap:2px"><span class="card-title" style="font-size:15px">Kick a viewer</span><span style="font-size:11px;color:var(--color-neutral-500);font-family:ui-monospace, monospace">bans-ban_room_user · bans-unban_room_user</span></div>
+          <div style="display:flex;gap:var(--space-2)"><input class="input" placeholder="Numeric user ID" value="{{ mv.banId }}" onChange="{{ mv.onBanId }}" style="font-family:ui-monospace, monospace;font-size:13px"><button class="btn btn-secondary" style="flex:none" onClick="{{ mv.ban }}" disabled="{{ mv.busy }}">Kick</button></div>
+          <sc-if value="{{ mv.errBan }}"><div style="font-size:12px;color:var(--color-accent-300)">{{ mv.errBan }}</div></sc-if>
+          <sc-for list="{{ mv.banned }}" as="u"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;box-shadow:inset 0 -1px 0 color-mix(in srgb, var(--color-text) 6%, transparent)"><div style="display:flex;flex-direction:column;min-width:0"><span>{{ u.label }}</span><span style="font-size:11px;color:var(--color-neutral-500);font-family:ui-monospace, monospace">{{ u.sub }}</span></div><button class="btn btn-ghost" onClick="{{ u.on }}" disabled="{{ u.busy }}">{{ u.action }}</button></div></sc-for>
+          <sc-if value="{{ mv.noBanned }}"><span style="font-size:13px;color:var(--color-neutral-500)">No one is banned.</span></sc-if>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:var(--space-3)">
+          <div style="display:flex;flex-direction:column;gap:2px"><span class="card-title" style="font-size:15px">Room moderators</span><span style="font-size:11px;color:var(--color-neutral-500);font-family:ui-monospace, monospace">moderators-get_room_moderators · add · remove</span></div>
+          <sc-for list="{{ mv.mods }}" as="u"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;box-shadow:inset 0 -1px 0 color-mix(in srgb, var(--color-text) 6%, transparent)"><div style="display:flex;flex-direction:column;min-width:0"><span>{{ u.label }}</span><span style="font-size:11px;color:var(--color-neutral-500);font-family:ui-monospace, monospace">{{ u.sub }}</span></div><button class="btn btn-ghost" onClick="{{ u.on }}" disabled="{{ u.busy }}" style="color:var(--color-neutral-400)">{{ u.action }}</button></div></sc-for>
+          <div style="display:flex;gap:var(--space-2)"><input class="input" placeholder="User ID to add" value="{{ mv.modId }}" onChange="{{ mv.onModId }}" style="font-family:ui-monospace, monospace;font-size:13px"><button class="btn btn-secondary" style="flex:none" onClick="{{ mv.addMod }}" disabled="{{ mv.busy }}">Add</button></div>
+          <sc-if value="{{ mv.errMod }}"><div style="font-size:12px;color:var(--color-accent-300)">{{ mv.errMod }}</div></sc-if>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:var(--space-3)">
+          <div style="display:flex;flex-direction:column;gap:2px"><span class="card-title" style="font-size:15px">Sensitive words</span><span style="font-size:11px;color:var(--color-neutral-500);font-family:ui-monospace, monospace">sensitive_words-get · add · delete</span></div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px"><sc-for list="{{ mv.words }}" as="w"><span class="tag tag-neutral" style="gap:6px;padding-right:4px">{{ w.word }}<button onClick="{{ w.on }}" disabled="{{ w.busy }}" title="Remove" style="border:0;background:none;padding:0 2px;color:var(--color-neutral-300);cursor:pointer;display:flex" style-hover="color:var(--color-text)"><i class="ph ph-x"></i></button></span></sc-for></div>
+          <div style="display:flex;gap:var(--space-2)"><input class="input" placeholder="Word or phrase" value="{{ mv.word }}" onChange="{{ mv.onWord }}"><button class="btn btn-secondary" style="flex:none" onClick="{{ mv.addWord }}" disabled="{{ mv.busy }}">Add</button></div>
+          <sc-if value="{{ mv.errWord }}"><div style="font-size:12px;color:var(--color-accent-300)">{{ mv.errWord }}</div></sc-if>
+        </div>
+      </sc-if>
+    </aside>
+  </sc-if>
+
+  <sc-if value="{{ addOpen }}">
+    <div class="dialog-backdrop" style="z-index:50" onClick="{{ closeAdd }}">
+      <form class="dialog" onClick="{{ stop }}" onSubmit="{{ submitAdd }}" style="animation:tn-in .2s ease-out">
+        <div class="dialog-title">Add target stream</div>
+        <div class="field"><label>Creator handle</label>
+          <div style="display:flex;gap:var(--space-2)"><input class="input" placeholder="@handle" value="{{ add.handle }}" onChange="{{ add.onHandle }}" autofocus=""><button type="button" class="btn btn-secondary" style="flex:none" onClick="{{ add.lookup }}"><i class="ph ph-magnifying-glass"></i>Look up</button></div>
+          <sc-if value="{{ add.errHandle }}"><div style="font-size:12px;color:var(--color-accent-300);margin-top:4px">{{ add.errHandle }}</div></sc-if>
+        </div>
+        <sc-if value="{{ add.looking }}"><div style="font-size:12px;color:var(--color-neutral-400);font-family:ui-monospace, monospace">get_user_id · get_user_basic · get_room_id…</div></sc-if>
+        <sc-if value="{{ add.lookErr }}"><div style="font-size:13px;color:var(--color-accent-300)">{{ add.lookErr }}</div></sc-if>
+        <sc-if value="{{ add.hasProfile }}">
+          <div style="display:flex;align-items:center;gap:var(--space-4);padding:var(--space-4);border-radius:var(--radius-md);box-shadow:var(--shadow-sm);animation:tn-in .2s ease-out">
+            <span style="width:40px;height:40px;flex:none;border-radius:50%;display:grid;place-items:center;background:var(--color-accent-900);color:var(--color-accent-300);font-size:13px">{{ add.p.mono }}</span>
+            <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px"><span>{{ add.p.nickname }}</span><span style="font-size:12px;color:var(--color-neutral-500)">{{ add.p.handle }} · {{ add.p.region }} · ID {{ add.p.userId }}</span><span style="font-size:11px;color:var(--color-neutral-500);font-family:ui-monospace, monospace">{{ add.p.room }}</span></div>
+            <span class="{{ add.p.liveClass }}">{{ add.p.liveLabel }}</span>
+          </div>
+        </sc-if>
+        <div class="field"><label>Type</label><div class="seg"><sc-for list="{{ add.types }}" as="o"><label class="seg-opt"><input type="radio" name="tn-type" checked="{{ o.checked }}" onChange="{{ o.on }}">{{ o.label }}</label></sc-for></div></div>
+        <sc-if value="{{ add.isBattle }}">
+          <div class="field"><label>Opponent handle</label><input class="input" placeholder="@opponent" value="{{ add.opponent }}" onChange="{{ add.onOpponent }}"><sc-if value="{{ add.errOpponent }}"><div style="font-size:12px;color:var(--color-accent-300);margin-top:4px">{{ add.errOpponent }}</div></sc-if></div>
+        </sc-if>
+        <div class="field"><label>Note (optional)</label><input class="input" placeholder="e.g. Rank defence before midnight" value="{{ add.label }}" onChange="{{ add.onLabel }}"></div>
+        <div class="dialog-actions"><button type="button" class="btn btn-secondary" onClick="{{ closeAdd }}">Cancel</button><button type="submit" class="btn btn-primary" disabled="{{ add.noProfile }}">{{ add.submitLabel }}</button></div>
+      </form>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ inviteOpen }}">
+    <div class="dialog-backdrop" style="z-index:50" onClick="{{ closeInvite }}">
+      <form class="dialog" onClick="{{ stop }}" onSubmit="{{ submitInvite }}" style="animation:tn-in .2s ease-out">
+        <div class="dialog-title">Invite a team member</div>
+        <div class="field"><label>Email</label><input class="input" placeholder="name@agency.com" value="{{ inv.email }}" onChange="{{ inv.onEmail }}" autofocus=""><sc-if value="{{ inv.err }}"><div style="font-size:12px;color:var(--color-accent-300);margin-top:4px">{{ inv.err }}</div></sc-if></div>
+        <div class="field"><label>Role</label><div class="seg"><sc-for list="{{ inv.roles }}" as="o"><label class="seg-opt"><input type="radio" name="tn-role" checked="{{ o.checked }}" onChange="{{ o.on }}">{{ o.label }}</label></sc-for></div></div>
+        <div class="field"><label>Roster scope</label><select class="input" value="{{ inv.team }}" onChange="{{ inv.onTeam }}"><option value="Team Nova">Team Nova</option><option value="Team Atlas">Team Atlas</option><option value="Team Echo">Team Echo</option></select></div>
+        <div class="dialog-actions"><button type="button" class="btn btn-secondary" onClick="{{ closeInvite }}">Cancel</button><button type="submit" class="btn btn-primary">Send invite</button></div>
+      </form>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ planOpen }}">
+    <div class="dialog-backdrop" style="z-index:50" onClick="{{ closePlan }}">
+      <div class="dialog" onClick="{{ stop }}" style="animation:tn-in .2s ease-out">
+        <div class="dialog-title">Switch to {{ pd.name }}?</div>
+        <div class="dialog-body">Your plan changes to {{ pd.price }} / month at the next renewal.</div>
+        <sc-for list="{{ pd.warnings }}" as="w"><div style="display:flex;gap:8px;font-size:13px;color:var(--color-accent-300)"><i class="ph ph-warning" style="flex:none;margin-top:2px"></i>{{ w }}</div></sc-for>
+        <div class="dialog-actions"><button class="btn btn-secondary" onClick="{{ closePlan }}">Cancel</button><button class="btn btn-primary" onClick="{{ confirmPlan }}">Confirm switch</button></div>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ pickerOpen }}">
+    <div class="dialog-backdrop" style="z-index:50" onClick="{{ closePicker }}">
+      <div class="dialog" onClick="{{ stop }}" style="animation:tn-in .2s ease-out">
+        <div class="dialog-title">Choose a TikTok account</div>
+        <div class="dialog-body">Euler found these cached sessions. Pin a user ID to skip this step next time.</div>
+        <div style="display:flex;flex-direction:column;gap:4px">
+          <sc-for list="{{ src.accounts }}" as="a"><button onClick="{{ a.on }}" style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border:0;border-radius:var(--radius-md);background:transparent;box-shadow:var(--shadow-sm);color:var(--color-text);font:inherit;cursor:pointer" style-hover="background:color-mix(in srgb, var(--color-accent) 10%, transparent)">{{ a.handle }}<i class="ph ph-caret-right" style="color:var(--color-neutral-500)"></i></button></sc-for>
+        </div>
+        <div class="dialog-actions"><button class="btn btn-secondary" onClick="{{ closePicker }}">Cancel</button></div>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ hasToast }}">
+    <div style="position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:60;padding:10px 16px;border-radius:var(--radius-md);background:var(--color-surface);box-shadow:var(--shadow-md);display:flex;align-items:center;gap:8px;animation:tn-in .2s ease-out"><i class="ph ph-check-circle" style="color:var(--color-accent)"></i>{{ toast }}</div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;agencyCut&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:10,&quot;min&quot;:5,&quot;max&quot;:50,&quot;step&quot;:1,&quot;unit&quot;:&quot;%&quot;,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Model&quot;},&quot;liveSpeed&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;default&quot;:6000,&quot;options&quot;:[1000,3000,6000],&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Live&quot;},&quot;showTexture&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Look&quot;}}">
+const RATE_COIN = 0.0133, RATE_DMD = 0.005, DAY = 86400000;
+const PURPOSES = ['Battle support', 'Scheduled drop', 'Milestone push', 'Retention'];
+const PURPOSE_ICON = { 'Battle support': 'ph-sword', 'Scheduled drop': 'ph-calendar-check', 'Milestone push': 'ph-flag-pennant', 'Retention': 'ph-handshake' };
+const SENDERS = ['@tn.vault', '@tn.ops.01', '@tn.ops.02', '@kai.founder'];
+const GIFTS = [
+  { name: 'Little Crown', coins: 199, min: 5, max: 40, p: .35 },
+  { name: 'Galaxy', coins: 1000, min: 1, max: 12, p: .35 },
+  { name: 'Lion', coins: 29999, min: 1, max: 2, p: .18 },
+  { name: 'TikTok Universe', coins: 34999, min: 1, max: 1, p: .12 },
+];
+const CREATORS = [
+  ['nova_shift', 'Team Nova', 'S', 5.8e6, 380000], ['midnight.wren', 'Team Nova', 'S', 4.2e6, 210000],
+  ['kairo.dev', 'Team Atlas', 'A', 2.6e6, 160000], ['yara_glow', 'Team Echo', 'A', 2.9e6, 260000],
+  ['velvet_static', 'Team Atlas', 'B', 1.1e6, 140000], ['atlas_prime', 'Team Atlas', 'A', 2.2e6, 120000],
+  ['sage_riot', 'Team Echo', 'B', 0.9e6, 95000], ['dexter.loop', 'Team Nova', 'B', 0.7e6, 30000],
+  ['lucid.fox', 'Team Echo', 'A', 1.9e6, 90000], ['sable_moon', 'Team Nova', 'A', 2.4e6, 150000],
+  ['quinn.orbit', 'Team Atlas', 'B', 0.6e6, 55000], ['juniper.wave', 'Team Echo', 'B', 1.3e6, 70000],
+].map(([h, team, tier, dmd, spend], i) => ({ id: 'c' + i, handle: '@' + h, team, tier, dmd, spend }));
+const TIERS = [
+  { name: 'Starter Agency', short: 'Starter', who: 'Solo managers & boutique agencies', price: '$49', limit: 10, multi: false, feats: ['Up to 10 creators tracked', 'Basic outgoing ledger', 'Weekly CSV exports'] },
+  { name: 'Growth Agency', short: 'Growth', who: 'Mid-size agencies running daily battles', price: '$149', limit: 50, multi: false, feats: ['Up to 50 creators', 'Real-time battle target tracking', 'Creator P&L cards', 'Webhook alerts'] },
+  { name: 'Scale / Enterprise', short: 'Scale', who: 'Top-tier TikTok LIVE agencies', price: '$299 – $499', limit: Infinity, multi: true, feats: ['Unlimited creators', 'Multi-seat team access', 'Custom API ingestion', 'Priority support'] },
+];
+const ROLES = [
+  { name: 'Founder', icon: 'ph-crown-simple', desc: 'Full access to every roster, the ledger, targets and billing.' },
+  { name: 'Manager', icon: 'ph-users-three', desc: "Runs one team's roster: ledger, P&L cards and live targets." },
+  { name: 'Moderator', icon: 'ph-tag', desc: "Logs and tags gifts for their team's creators during streams." },
+];
+const REGIONS = ['US', 'GB', 'CA', 'AU', 'DE', 'FR', 'BR', 'MX', 'JP', 'PH'];
+const RANKS = [['DAILY_RANK', 'Daily'], ['FANS_TEAM_RANK', 'Fans team'], ['SALE_RANK', 'Sales'], ['RANKING_LEAGUE', 'League']];
+const LEAGUES = ['A1', 'A2', 'A3', 'B1', 'B2', 'B3', 'B4', 'B5', 'C1', 'C2', 'C3', 'C4', 'C5', 'D1', 'D2', 'D3', 'D4', 'D5'];
+const DURS = [['5', '5s'], ['30', '30s'], ['60', '1 min'], ['300', '5 min'], ['-1', 'Permanent']];
+const POOL = ['lumen.rise', 'arc.vela', 'zoe.kite', 'marlo_streams', 'indie.pulse', 'onyx_flicker', 'haze_royale', 'wisp_and_co', 'kellan_vibes', 'echo.rae', 'cosmo_ray', 'sable.drift', 'rio.mantra', 'pixel.sonnet', 'bram.lights', 'tessa.loud', 'nori.wave', 'ivo.kingdom', 'lark.and.co', 'mina.static', 'orla.glow', 'jett.rush', 'fable.fox', 'quill.party', 'ruby.lane', 'soren.live', 'vex.arcade', 'tamsin.hq', 'ola.nights', 'kit.marrow'];
+const TITLES = ['Late night battles', 'Road to top 10', 'PK all night', 'Chill set, say hi', 'Morning coffee live', 'Rank defence', 'Q&A and gifts', 'Duet battles', 'Karaoke hour', 'Gaming with chat'];
+const CHAT_LINES = ['lets gooo', 'team nova all day', 'who is winning?', 'that lion was huge', 'hi from texas', 'free coins at the link in my bio', 'tap tap tap', 'one more round!', 'giveaway link in profile', 'love this set', 'gg', 'rank defence time', 'send roses everyone', 'this battle is close'];
+const CHATTERS = ['zoe.kite', 'rio.mantra', 'nori.wave', 'jett.rush', 'coin.drop.4u', 'ruby.lane', 'ola.nights', 'tessa.loud', 'free.gifts.now', 'kit.marrow'];
+const SNIP_WS = [
+  'import WebSocket from "ws";',
+  'import { createWebSocketUrl, SchemaVersion } from "@eulerstream/euler-websocket-sdk";',
+  '',
+  '// Backend only: the API key never leaves the server',
+  'function openSocket(uniqueId) {',
+  '  const url = new URL(createWebSocketUrl({ uniqueId, features: { schemaVersion: SchemaVersion.v2 } }));',
+  '  url.searchParams.set("apiKey", process.env.EULER_API_KEY);',
+  '  const ws = new WebSocket(url);',
+  '',
+  '  ws.on("message", (raw) => {',
+  '    const msg = JSON.parse(raw.toString()); // first message carries room info',
+  '    routeEvent(uniqueId, msg);              // same shapes as tiktok-live-connector types',
+  '  });',
+  '',
+  '  ws.on("close", (code) => handleClose(uniqueId, code)); // see close codes',
+  '  return ws;',
+  '}',
+].join('\n');
+const SNIP_JWT = [
+  '// 1. Backend: mint a short-lived JWT scoped to one creator',
+  'const { data } = await sdk.authentication.createJWT(Config.SignServer.ACCOUNT_ID, {',
+  '  expireAfter: 60,',
+  '  websockets: { allowedCreators: [uniqueId], maxWebSockets: 1 },',
+  '});',
+  'return data.token;',
+  '',
+  '// 2. Browser: connect without exposing the API key',
+  'import { createWebSocketUrl, ClientCloseCode } from "@eulerstream/euler-websocket-sdk";',
+  '',
+  'const url = createWebSocketUrl({',
+  '  uniqueId,',
+  '  jwtKey: token,',
+  '  features: { bundleEvents: true, syntheticPresence: true },',
+  '});',
+  'const ws = new WebSocket(url);',
+  'ws.addEventListener("close", (e) => {',
+  '  if (e.code === ClientCloseCode.NOT_LIVE) markOffline(uniqueId);',
+  '  if (e.code === ClientCloseCode.INVALID_AUTH || e.code === ClientCloseCode.NO_PERMISSION) refreshJwtAndReconnect();',
+  '});',
+].join('\n');
+const SNIP_SDK = {
+  py: ['# pip install EulerApiSdk', 'import os', 'from EulerApiSdk import AuthenticatedClient', 'from EulerApiSdk.api.tik_tok_live import fetch_webcast_url', '', 'client = AuthenticatedClient(', '    base_url="https://tiktok.eulerstream.com",', '    token=os.environ["EULER_API_KEY"],', ')', '', 'with client as c:', '    response = fetch_webcast_url.sync_detailed(client=c)', '    print(response.status_code, response.parsed)'].join('\n'),
+  cs: ['// dotnet add package EulerApiSdk', 'using EulerApiSdk;', 'using EulerApiSdk.Client;', '', 'using var client = new EulerStreamApiClient(', '    host => host.AddTokens(new ApiKeyToken(Environment.GetEnvironmentVariable("EULER_API_KEY"), ClientUtils.ApiKeyHeader.ApiKey, prefix: ""))', ');', '', 'var response = await client.Webcast.FetchWebcastURLAsync("ttlive-node", uniqueId: "nova_shift");', 'Console.WriteLine(response.Ok());'].join('\n'),
+  java: ['// implementation \'io.github.isaackogan:euler-api-sdk\'', 'import io.github.isaackogan.EulerStreamApiClient;', '', 'EulerStreamApiClient client = EulerStreamApiClient.builder()', '    .apiKey(System.getenv("EULER_API_KEY"))', '    .build();', '', 'client.webcast().fetchWebcastURL("ttlive-node", null, "nova_shift");'].join('\n'),
+  go: ['// go get github.com/EulerStream/Euler-Api-Sdk/go-sdk', 'package main', '', 'import (', '  "context"', '  "fmt"', '  "os"', '', '  eulerstream "github.com/EulerStream/Euler-Api-Sdk/sdk/go"', ')', '', 'func main() {', '  client := eulerstream.NewEulerStreamClient(', '    eulerstream.WithAPIKey(os.Getenv("EULER_API_KEY")),', '  )', '', '  hosts, _, err := client.Analytics.GetHosts(context.Background()).Execute()', '  if err != nil {', '    panic(err)', '  }', '  fmt.Println(hosts)', '}'].join('\n'),
+};
+const CLOSE_CODES = [
+  [1000, 'NORMAL', 'Closed by us. No action.'],
+  [4404, 'NOT_LIVE', 'Mark target offline and poll get_room_id.'],
+  [4005, 'STREAM_END', 'Close the session and finalise its ledger totals.'],
+  [4006, 'NO_MESSAGES_TIMEOUT', 'Reconnect once, then check get_room_id.'],
+  [4555, 'MAX_LIFETIME_EXCEEDED', 'Reconnect immediately. Sockets cap at 8 hours.'],
+  [4500, 'TIKTOK_CLOSED_CONNECTION', 'Retry with backoff.'],
+  [1011, 'INTERNAL_SERVER_ERROR', 'Retry with backoff.'],
+  [4556, 'WEBCAST_FETCH_ERROR', 'Retry with backoff.'],
+  [4557, 'ROOM_INFO_FETCH_ERROR', 'Retry with backoff.'],
+  [4429, 'TOO_MANY_CONNECTIONS', 'Back off and alert. Concurrent socket limit reached.'],
+  [4401, 'INVALID_AUTH', 'Mint a new JWT, or flag the API key on Data source.'],
+  [4403, 'NO_PERMISSION', 'JWT is not scoped to this creator. Mint a new one.'],
+  [4400, 'INVALID_OPTIONS', 'Stop. Bad uniqueId or JWT. Alert a Founder.'],
+];
+const TOOL_GROUPS = [
+  ['Lookup', 'Add target', false, ['get_user_id', 'get_user_basic', 'get_room_id']],
+  ['Discovery', 'Live targets', false, ['get_live_feed']],
+  ['Rankings', 'Rankings', false, ['rankings-get_leaderboard_catalog', 'rankings-get_leaderboard']],
+  ['Moderation', 'Room moderation', true, ['toggle_room_comments', 'mutes-get_muted_users', 'mutes-mute_room_user', 'mutes-unmute_room_user', 'bans-get_banned_users', 'bans-ban_room_user', 'bans-unban_room_user', 'moderators-get_room_moderators', 'moderators-add_room_moderator', 'moderators-remove_room_moderator', 'sensitive_words-get_sensitive_words', 'sensitive_words-add_sensitive_word', 'sensitive_words-delete_sensitive_word']],
+];
+const AUTH_TOOLS = new Set(TOOL_GROUPS[3][3]);
+const FORCE_LIVE = new Set(['nova_shift', 'midnight.wren', 'kairo.dev']);
+const hash = str => { let h = 2166136261; for (let i = 0; i < str.length; i++) h = Math.imul(h ^ str.charCodeAt(i), 16777619); return h >>> 0; };
+const digits = (p, k) => p + String(hash(k) % 1e10).padStart(10, '0') + String(hash(k + '#') % 1e7).padStart(7, '0');
+const fakeId = u => digits('67', u);
+const roomIdOf = u => digits('73', u + ':room');
+const isLiveOf = u => FORCE_LIVE.has(u) || hash(u + ':live') % 3 !== 0;
+const titleCase = u => u.replace(/[._]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).trim();
+function mulberry(a) { return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+function pickGift(r, pool) { const g = pool || GIFTS; const tot = g.reduce((a, x) => a + x.p, 0); let x = r() * tot; for (const it of g) { x -= it.p; if (x < 0) return it; } return g[0]; }
+let _id = 0;
+function makeEntry(r, c, ts, pool) {
+  const g = pickGift(r, pool); const combo = g.min + Math.floor(r() * (g.max - g.min + 1));
+  return { id: 'g' + (_id++), ts, creatorId: c.id, sender: SENDERS[Math.floor(r() * SENDERS.length)], gift: g.name, combo, coins: g.coins * combo, purpose: r() < 0.15 ? null : PURPOSES[Math.floor(r() * 4)] };
+}
+function seedLedger(now) {
+  const r = mulberry(42), out = [];
+  CREATORS.forEach(c => { let sum = 0; while (sum < c.spend) { const e = makeEntry(r, c, now - r() * 30 * DAY); sum += e.coins; out.push(e); } });
+  return out.sort((a, b) => b.ts - a.ts);
+}
+const compact = n => { const a = Math.abs(n); return a >= 1e6 ? (n / 1e6).toFixed(2) + 'M' : a >= 1e4 ? (n / 1e3).toFixed(1) + 'k' : Math.round(n).toLocaleString(); };
+const usd = v => (v < 0 ? '−' : '') + '$' + Math.round(Math.abs(v)).toLocaleString();
+const mmss = s => String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
+const handleOk = h => /^@[a-z0-9._]{2,24}$/i.test(h.trim());
+
+class Component extends DCLogic {
+  constructor(p) {
+    super(p);
+    const now = Date.now(), r = mulberry(7);
+    const series = () => Array.from({ length: 28 }, () => Math.round(r() * r() * 6000));
+    this.state = {
+      now, screen: 'overview', unit: 'usd', range: '7d', team: 'All teams', tier: 'All tiers',
+      ledger: seedLedger(now), query: '', purpose: 'All', limit: 40, openTag: null, drawer: null, sort: 'net',
+      targets: [
+        { id: 't1', handle: '@nova_shift', type: 'Battle', opponent: '@lumen.rise', label: 'Agency battle · round 2 of 3', viewers: 8342, coinsIn: 184200, agencyOut: 42000, us: 61200, them: 54800, series: series(), started: now - 372000 },
+        { id: 't2', handle: '@midnight.wren', type: 'Stream', label: 'Late set — milestone push', viewers: 3120, coinsIn: 72400, agencyOut: 9000, series: series(), started: now - 5040000 },
+        { id: 't3', handle: '@kairo.dev', type: 'Battle', opponent: '@arc.vela', label: 'Rank defence before midnight', viewers: 2210, coinsIn: 38900, agencyOut: 12000, us: 18400, them: 21300, series: series(), started: now - 128000 },
+      ],
+      leaders: [
+        { handle: '@tn.vault', agency: true, coins: 88200 }, { handle: '@orbit.whale', agency: false, coins: 71300 },
+        { handle: '@tn.ops.01', agency: true, coins: 52400 }, { handle: '@lux.gifts', agency: false, coins: 38900 },
+        { handle: '@sky.patron', agency: false, coins: 27100 }, { handle: '@tn.ops.02', agency: true, coins: 19800 },
+      ],
+      addOpen: false, add: { handle: '', type: 'Battle', opponent: '', label: '' }, addErr: {},
+      members: [
+        { id: 'm1', name: 'Kai Moreno', email: 'kai@northlight.agency', role: 'Founder', team: 'All teams', last: 'Now' },
+        { id: 'm2', name: 'Priya Shah', email: 'priya@northlight.agency', role: 'Manager', team: 'Team Nova', last: '12m ago' },
+        { id: 'm3', name: 'Dante Cruz', email: 'dante@northlight.agency', role: 'Manager', team: 'Team Atlas', last: '1h ago' },
+        { id: 'm4', name: 'Mei Lin', email: 'mei@northlight.agency', role: 'Moderator', team: 'Team Echo', last: '3h ago' },
+        { id: 'm5', name: 'Jordan Blake', email: 'jordan@northlight.agency', role: 'Moderator', team: 'Team Nova', last: 'Yesterday' },
+      ],
+      inviteOpen: false, inv: { email: '', role: 'Moderator', team: 'Team Nova' }, invErr: '',
+      plan: 'Scale / Enterprise', planPick: null, toast: '',
+      viewAs: 'Founder', pickerOpen: false, connErr: {},
+      conn: { mode: 'oauth', host: 'tiktok.eulerstream.com', apiKey: 'euler_demo_key', pinned: '', cookie: '', status: 'connected', account: '@northlight.ops', since: now - 3 * 3600000, events: 18420, lastEvent: now },
+      addLook: null, calls: [], cfgStyle: 'remote',
+      gifts: { list: null, loading: false, err: '', syncedAt: null, q: '' },
+      rk: { catalog: null, region: 'US', rank: 'DAILY_RANK', league: 'A1', date: '', loading: false, data: null, err: '' },
+      disc: { region: 'US', loading: false, rooms: null, err: '' },
+      mod: {}, modFor: null, modForm: { muteId: '', muteDur: '300', banId: '', modId: '', word: '' }, modErr: {}, modBusy: '',
+    };
+    this.state.targets = this.state.targets.map(t => { const u = t.handle.slice(1); return { ...t, roomId: roomIdOf(u), anchorId: fakeId(u), live: true }; });
+  }
+  mcp(tool, args) {
+    const t0 = Date.now();
+    return new Promise((res, rej) => setTimeout(() => {
+      const c = this.state.conn; let out, err;
+      if (c.status !== 'connected') err = 'Not connected to Euler Stream';
+      else { try { out = this.mock(tool, args || {}); } catch (e) { err = e.message; } }
+      const entry = { id: 'k' + (_id++), tool, ok: !err, at: Date.now(), ms: Date.now() - t0, auth: AUTH_TOOLS.has(tool) ? (c.mode === 'oauth' ? 'x-oauth-token' : 'x-cookie-header') : '', args: Object.entries(args || {}).filter(([, v]) => v !== '' && v != null).map(([k, v]) => k + '=' + v).join('  ') };
+      this.setState(s => ({ calls: [entry, ...s.calls].slice(0, 10) }));
+      err ? rej(new Error(err)) : res(out);
+    }, 250 + Math.random() * 450));
+  }
+  mock(tool, a) {
+    const u = (a.unique_id || '').replace(/^@/, '');
+    switch (tool) {
+      case 'get_user_id': return { user_id: fakeId(u) };
+      case 'get_user_basic': return { unique_id: u, nickname: titleCase(u), region: REGIONS[hash(u) % REGIONS.length] };
+      case 'get_room_id': { const live = isLiveOf(u); return { room_id: live ? roomIdOf(u) : null, is_live: live }; }
+      case 'get_live_feed': {
+        const r = mulberry(hash(a.region) + (this._fn || 0)), names = [...POOL, ...(a.region === 'US' ? CREATORS.slice(0, 6).map(c => c.handle.slice(1)) : [])].sort(() => r() - 0.5).slice(0, 7);
+        return { rooms: names.map(n => ({ room_id: roomIdOf(n), title: TITLES[Math.floor(r() * TITLES.length)], viewer_count: 120 + Math.round(r() * r() * 14000), creator: { unique_id: n, nickname: titleCase(n) } })).sort((x, y) => y.viewer_count - x.viewer_count) };
+      }
+      case 'rankings-get_leaderboard_catalog': return [...REGIONS, 'WW'].map(rg => ({ region: rg, rank_names: RANKS.map(x => x[0]).filter(n => !(rg === 'WW' && n === 'RANKING_LEAGUE')), leagues: LEAGUES }));
+      case 'rankings-get_leaderboard': {
+        if (a.date && new Date(a.date) > new Date()) throw new Error('No snapshot exists for ' + a.date);
+        const r = mulberry(hash(a.region + a.rank_name + (a.league || '') + (a.date || 'latest')));
+        let names = [...POOL].sort(() => r() - 0.5).slice(0, 25);
+        if (a.region === 'US' || a.region === 'WW') CREATORS.slice(0, 5).forEach((c, i) => { if (r() < 0.7) names[Math.floor(r() * 25)] = c.handle.slice(1); });
+        names = [...new Set(names)];
+        let sc = Math.round(900000 + r() * 2.4e6);
+        return { total_ranks: a.rank_name === 'RANKING_LEAGUE' ? 100 : 200 + Math.floor(r() * 800), ranks: names.map((n, i) => { const o = { rank: i + 1, unique_id: n, nickname: titleCase(n), score: sc }; sc = Math.round(sc * (0.82 + r() * 0.15)); return o; }) };
+      }
+      case 'mutes-get_muted_users': return { users: [{ user_id: fakeId('spam.bot.22'), name: '@spam.bot.22', duration: '5 min' }, { user_id: fakeId('caps.lock.larry'), name: '@caps.lock.larry', duration: 'Permanent' }] };
+      case 'bans-get_banned_users': return { users: [{ user_id: fakeId('coin.scam.offer'), name: '@coin.scam.offer' }] };
+      case 'moderators-get_room_moderators': return { moderators: [{ user_id: fakeId('tn.ops.01'), name: '@tn.ops.01' }, { user_id: fakeId('tn.ops.02'), name: '@tn.ops.02' }] };
+      case 'sensitive_words-get_sensitive_words': return { words: [{ word_id: 'w1', word: 'free coins' }, { word_id: 'w2', word: 'giveaway link' }] };
+      case 'gifts.listWebcastGifts': return { gifts: [['Rose', 1], ['GG', 1], ['Finger Heart', 5], ['Perfume', 20], ['Doughnut', 30], ['Hand Hearts', 100], ['Little Crown', 199], ['Corgi', 299], ['Money Gun', 500], ['Galaxy', 1000], ['Lion', 29999], ['TikTok Universe', 34999]].map(([name, diamond_count], i) => ({ id: 5000 + i * 37, name, diamond_count })) };
+      default: return { ok: true };
+    }
+  }
+  loadGifts() {
+    this.setState(s => ({ gifts: { ...s.gifts, loading: true, err: '' } }));
+    this.mcp('gifts.listWebcastGifts', {}).then(d => this.setState(s => ({ gifts: { ...s.gifts, loading: false, list: d.gifts, syncedAt: Date.now() } }))).catch(e => this.setState(s => ({ gifts: { ...s.gifts, loading: false, err: e.message } })));
+  }
+  lookup = () => {
+    const h = this.state.add.handle.trim();
+    if (!handleOk(h)) return this.setState({ addErr: { handle: 'Enter a TikTok handle starting with @' } });
+    const u = h.slice(1);
+    this.setState({ addLook: { loading: true, handle: h } });
+    Promise.all([this.mcp('get_user_id', { unique_id: u }), this.mcp('get_user_basic', { unique_id: u }), this.mcp('get_room_id', { unique_id: u })])
+      .then(([id, basic, room]) => { if (this.state.add.handle.trim() === h) this.setState({ addLook: { ...basic, handle: h, user_id: id.user_id, room_id: room.room_id, is_live: room.is_live } }); })
+      .catch(e => this.setState({ addLook: { error: e.message, handle: h } }));
+  };
+  openAddFor = h => this.setState({ addOpen: true, addErr: {}, addLook: null, add: { handle: h, type: 'Stream', opponent: '', label: '' } }, () => this.lookup());
+  addTarget(o) {
+    const t = { id: 't' + Date.now(), viewers: o.live ? 400 + Math.round(Math.random() * 2000) : 0, coinsIn: 0, agencyOut: 0, us: 0, them: 0, series: Array(28).fill(0), started: Date.now(), ...o, label: o.label || (o.type === 'Battle' ? 'Battle vs ' + o.opponent : 'Live stream') };
+    this.setState(s => ({ targets: [t, ...s.targets] }));
+    this.flash(o.live ? 'Tracking ' + o.handle : o.handle + ' is offline. Tracking starts when they go live.');
+    this.syncTracked(t, true);
+  }
+  // Upserts into tracked_targets via window.TokNomicsBackend (backend/src/trackTargets.ts); simulated when absent
+  syncTracked(t, active) {
+    const B = window.TokNomicsBackend, src = t.type === 'Battle' ? 'battle' : 'pin';
+    const setSync = (sync, syncMsg) => this.setState(st => ({ targets: st.targets.map(y => y.id === t.id ? { ...y, sync, syncMsg } : y) }));
+    if (active) setSync('pending', 'Upserting to tracked_targets…');
+    const p = B ? (active ? B.trackTarget(t.handle, src, t.label) : B.untrackTarget(t.handle)) : new Promise(r => setTimeout(r, 450 + Math.random() * 400));
+    p.then(() => active && setSync('ok', B ? 'Synced · worker tuning in' : 'Synced (simulated) · worker tuning in'))
+      .catch(e => active ? setSync('err', e.message) : this.flash(e.message));
+  }
+  loadCatalog() {
+    this.setState(s => ({ rk: { ...s.rk, loading: true, err: '' } }));
+    this.mcp('rankings-get_leaderboard_catalog', {}).then(cat => this.setState(s => ({ rk: { ...s.rk, catalog: cat } }), () => this.loadBoard())).catch(e => this.setState(s => ({ rk: { ...s.rk, loading: false, err: e.message } })));
+  }
+  loadBoard() {
+    const rk = this.state.rk, args = { region: rk.region, rank_name: rk.rank };
+    if (rk.rank === 'RANKING_LEAGUE') args.league = rk.league;
+    if (rk.date) args.date = rk.date;
+    const key = JSON.stringify(args); this._rkKey = key;
+    this.setState(s => ({ rk: { ...s.rk, loading: true, err: '' } }));
+    this.mcp('rankings-get_leaderboard', args).then(d => { if (this._rkKey === key) this.setState(s => ({ rk: { ...s.rk, loading: false, data: d } })); }).catch(e => { if (this._rkKey === key) this.setState(s => ({ rk: { ...s.rk, loading: false, err: e.message } })); });
+  }
+  setRk(p) {
+    this.setState(s => { const n = { ...s.rk, ...p }; const c = n.catalog && n.catalog.find(x => x.region === n.region); if (c && !c.rank_names.includes(n.rank)) n.rank = 'DAILY_RANK'; return { rk: n }; }, () => this.loadBoard());
+  }
+  loadFeed() {
+    this._fn = (this._fn || 0) + 1;
+    this.setState(s => ({ disc: { ...s.disc, loading: true, err: '' } }));
+    this.mcp('get_live_feed', { region: this.state.disc.region }).then(d => this.setState(s => ({ disc: { ...s.disc, loading: false, rooms: d.rooms } }))).catch(e => this.setState(s => ({ disc: { ...s.disc, loading: false, err: e.message } })));
+  }
+  loadMod(t) {
+    const room_id = t.roomId, anchor_id = t.anchorId, sec_anchor_id = 'MS4wLjABAAAA' + anchor_id.slice(-8);
+    this.setState(s => { const m = { ...s.mod }; delete m[room_id]; return { mod: m }; });
+    Promise.all([this.mcp('mutes-get_muted_users', { room_id }), this.mcp('bans-get_banned_users', { room_id }), this.mcp('moderators-get_room_moderators', { anchor_id }), this.mcp('sensitive_words-get_sensitive_words', { sec_anchor_id, room_id })])
+      .then(([mu, ba, mo, wo]) => this.setState(s => ({ mod: { ...s.mod, [room_id]: { comments: true, muted: mu.users, banned: ba.users, mods: mo.moderators, words: wo.words } } })))
+      .catch(e => this.setState(s => ({ mod: { ...s.mod, [room_id]: { error: e.message } } })));
+  }
+  openMod = t => { this.setState({ modFor: t.id, modErr: {}, modForm: { muteId: '', muteDur: '300', banId: '', modId: '', word: '' } }); if (!this.state.mod[t.roomId] || this.state.mod[t.roomId].error) this.loadMod(t); };
+  modAct(room, tool, args, fn, msg) {
+    this.setState({ modBusy: tool });
+    this.mcp(tool, args).then(() => { this.setState(s => ({ modBusy: '', mod: { ...s.mod, [room]: fn(s.mod[room]) } })); this.flash(msg); }).catch(e => { this.setState({ modBusy: '' }); this.flash(e.message); });
+  }
+  setModForm(p) { this.setState(s => ({ modForm: { ...s.modForm, ...p }, modErr: {} })); }
+  setConn(patch) { this.setState(st => ({ conn: { ...st.conn, ...patch } })); }
+  connect = () => {
+    const c = this.state.conn, err = {};
+    if (!c.host.trim()) err.host = 'Enter the server host';
+    if (!c.apiKey.trim()) err.apiKey = 'An API key is required in both modes';
+    if (c.mode === 'cookie' && !/sessionid=/.test(c.cookie)) err.cookie = 'Paste the raw Cookie header. It must include sessionid=';
+    if (Object.keys(err).length) return this.setState({ connErr: err });
+    this.setState({ connErr: {} });
+    this.setConn({ status: 'authorizing' });
+    clearTimeout(this._ct);
+    if (c.mode === 'oauth' && !c.pinned.trim()) { this._ct = setTimeout(() => this.setState({ pickerOpen: true }), 700); return; }
+    const account = c.mode === 'oauth' ? 'Pinned user ' + c.pinned.trim() : 'Cookie session';
+    this._ct = setTimeout(() => { this.setConn({ status: 'connected', account, since: Date.now(), events: 0, lastEvent: Date.now() }); this.flash('Connected to Euler Stream'); }, c.mode === 'oauth' ? 450 : 900);
+  };
+  pickAccount = a => { this.setState({ pickerOpen: false }); this.setConn({ status: 'connected', account: a, since: Date.now(), events: 0, lastEvent: Date.now() }); this.flash('Authorized as ' + a); };
+  copy = (text, label) => { try { navigator.clipboard.writeText(text); } catch (e) {} this.flash(label + ' copied'); };
+  componentDidMount() { this.schedule(); }
+  componentDidUpdate(pp) { if (pp && pp.liveSpeed !== this.props.liveSpeed) this.schedule(); }
+  go(k) {
+    this.setState({ screen: k, openTag: null });
+    const s = this.state;
+    if (k === 'rankings' && !s.rk.data && !s.rk.loading) s.rk.catalog ? this.loadBoard() : this.loadCatalog();
+    if (k === 'battles' && !s.disc.rooms && !s.disc.loading) this.loadFeed();
+    if (k === 'source' && !s.gifts.list && !s.gifts.loading) this.loadGifts();
+  }
+  componentWillUnmount() { clearInterval(this._iv); clearTimeout(this._tt); }
+  schedule() { clearInterval(this._iv); this._iv = setInterval(() => this.tick(), this.props.liveSpeed ?? 3000); }
+  tick() {
+    const r = Math.random;
+    this.setState(s => {
+      const now = Date.now();
+      if (s.conn.status !== 'connected') return { now };
+      let ledger = s.ledger;
+      if (r() < 0.65) {
+        const c = CREATORS[Math.floor(r() * 6)];
+        const e = makeEntry(r, c, now, GIFTS.slice(0, 2));
+        e.purpose = r() < 0.5 ? 'Battle support' : null;
+        ledger = [e, ...ledger];
+      }
+      const targets = s.targets.map(t => {
+        if (t.live === false) return t;
+        const d = Math.round(r() * r() * 7000), out = r() < 0.25 ? 1000 * (1 + Math.floor(r() * 5)) : 0;
+        const n = { ...t, coinsIn: t.coinsIn + d + out, agencyOut: t.agencyOut + out, series: [...t.series.slice(1), d + out], viewers: Math.max(200, t.viewers + Math.round(r() * 50 - 22)) };
+        if (t.type === 'Battle') { n.us = t.us + Math.round(d * 0.55) + out; n.them = t.them + Math.round(r() * r() * 5200); }
+        return n;
+      });
+      const chat = { ...(s.chat || {}) };
+      targets.forEach(t => {
+        if (t.live === false) return;
+        const add = [];
+        for (let i = 0, n = Math.floor(r() * 3); i < n; i++) { const u = CHATTERS[Math.floor(r() * CHATTERS.length)]; add.push({ id: 'cm' + (_id++), user: u, userId: fakeId(u), comment: CHAT_LINES[Math.floor(r() * CHAT_LINES.length)], ts: now }); }
+        if (add.length) chat[t.id] = [...add, ...(chat[t.id] || [])].slice(0, 30);
+      });
+      const leaders = s.leaders.map(l => ({ ...l, coins: l.coins + (r() < 0.4 ? Math.round(r() * (l.agency ? 3000 : 4200)) : 0) }));
+      return { now, ledger, targets, leaders, chat, conn: { ...s.conn, events: s.conn.events + 3 + Math.floor(r() * 10), lastEvent: now } };
+    });
+  }
+  flash(msg) { clearTimeout(this._tt); this.setState({ toast: msg }); this._tt = setTimeout(() => this.setState({ toast: '' }), 2600); }
+  F(v) {
+    const u = this.state.unit, neg = v < 0, a = Math.abs(v);
+    const s = u === 'usd' ? '$' + (a >= 100 ? Math.round(a).toLocaleString() : a.toFixed(2)) : u === 'coins' ? compact(a / RATE_COIN) + ' coins' : compact(a / RATE_DMD) + ' diamonds';
+    return (neg ? '−' : '') + s;
+  }
+  Fs(v) { return (v >= 0 ? '+' : '') + this.F(v); }
+  ago(ts) {
+    const s = Math.max(1, Math.round((this.state.now - ts) / 1000));
+    if (s < 60) return s + 's ago'; if (s < 3600) return Math.floor(s / 60) + 'm ago'; if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+    return new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  }
+  stamp(ts) { const d = new Date(ts); return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ' · ' + d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false }); }
+  opts(list, cur, key, labels) { return list.map((v, i) => ({ label: labels ? labels[i] : v, checked: cur === v, on: () => this.setState({ [key]: v, limit: 40, openTag: null }) })); }
+  exportCsv = () => {
+    const head = 'timestamp,sender,recipient,gift,combo,coins,usd,purpose';
+    const lines = (this._rows || []).map(e => [new Date(e.ts).toISOString(), e.sender, CREATORS.find(c => c.id === e.creatorId).handle, e.gift, e.combo, e.coins, (e.coins * RATE_COIN).toFixed(2), e.purpose || ''].join(','));
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([[head, ...lines].join('\n')], { type: 'text/csv' }));
+    a.download = 'toknomics-ledger.csv'; a.click();
+    this.flash(lines.length + ' rows exported');
+  };
+  submitAdd = e => {
+    e.preventDefault();
+    const a = this.state.add, err = {};
+    if (!handleOk(a.handle)) err.handle = 'Enter a TikTok handle starting with @';
+    if (a.type === 'Battle' && !handleOk(a.opponent)) err.opponent = 'Battles need an opponent handle';
+    const L = this.state.addLook;
+    if (!err.handle && (!L || !L.user_id || L.handle !== a.handle.trim())) err.handle = 'Look up the handle first';
+    if (this.state.targets.some(t => t.handle.toLowerCase() === a.handle.trim().toLowerCase())) err.handle = 'Already tracking this stream';
+    if (Object.keys(err).length) return this.setState({ addErr: err });
+    this.addTarget({ handle: a.handle.trim(), type: a.type, opponent: a.opponent.trim(), label: a.label.trim(), roomId: L.room_id || roomIdOf(L.unique_id), anchorId: L.user_id, live: L.is_live });
+    this.setState({ addOpen: false, add: { handle: '', type: 'Battle', opponent: '', label: '' }, addErr: {}, addLook: null });
+  };
+  submitInvite = e => {
+    e.preventDefault();
+    const v = this.state.inv;
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.email.trim())) return this.setState({ invErr: 'Enter a valid email address' });
+    if (this.state.members.some(m => m.email === v.email.trim())) return this.setState({ invErr: 'Already on the team' });
+    const name = v.email.split('@')[0].replace(/[._]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+    this.setState(s => ({ members: [...s.members, { id: 'm' + Date.now(), name, email: v.email.trim(), role: v.role, team: v.team, last: 'Invite pending' }], inviteOpen: false, inv: { email: '', role: 'Moderator', team: 'Team Nova' }, invErr: '' }));
+    this.flash('Invite sent to ' + v.email.trim());
+  };
+
+  renderVals() {
+    const s = this.state, F = v => this.F(v);
+    const cutPct = this.props.agencyCut ?? 20, cut = cutPct / 100;
+    const days = { '24h': 1, '7d': 7, '30d': 30 }[s.range], frac = days / 30, cutoff = s.now - days * DAY;
+    const rangeLabel = { '24h': 'last 24 hours', '7d': 'last 7 days', '30d': 'last 30 days' }[s.range];
+    const creators = CREATORS.filter(c => (s.team === 'All teams' || c.team === s.team) && (s.tier === 'All tiers' || c.tier === s.tier));
+    const ids = new Set(creators.map(c => c.id));
+    const inRange = s.ledger.filter(e => e.ts >= cutoff && ids.has(e.creatorId));
+    const statFor = c => { const es = inRange.filter(e => e.creatorId === c.id); const invest = es.reduce((a, e) => a + e.coins, 0) * RATE_COIN; const dmd = c.dmd * frac; const comm = dmd * RATE_DMD * cut; return { c, es, invest, dmd, comm, net: comm - invest }; };
+    const stats = creators.map(statFor);
+    const tot = stats.reduce((a, x) => ({ invest: a.invest + x.invest, comm: a.comm + x.comm }), { invest: 0, comm: 0 });
+    const net = tot.comm - tot.invest, inProfit = stats.filter(x => x.net >= 0).length;
+    const open = id => () => this.setState({ drawer: id });
+    const cv = x => ({
+      id: x.c.id, handle: x.c.handle, team: x.c.team, tier: 'Tier ' + x.c.tier, mono: x.c.handle.slice(1, 3).toUpperCase(),
+      invest: F(x.invest), comm: F(x.comm), net: this.Fs(x.net), gifts: x.es.length,
+      roi: x.invest ? (x.net >= 0 ? '+' : '−') + Math.abs(Math.round(x.net / x.invest * 100)) + '%' : '—',
+      statusClass: x.net >= 0 ? 'tag tag-accent' : 'tag tag-neutral', status: x.net >= 0 ? 'Profit' : 'Loss',
+      netColor: x.net >= 0 ? 'var(--color-accent-300)' : 'var(--color-neutral-300)',
+      investShare: (x.invest + x.comm ? x.invest / (x.invest + x.comm) * 100 : 50).toFixed(1) + '%', onOpen: open(x.c.id),
+    });
+
+    const titles = {
+      overview: ['Agency overview', 'Every coin your accounts gifted, against the commission it returned.'],
+      ledger: ['Gifting ledger', 'Itemized outgoing gifts from agency-controlled accounts. Click a purpose to retag it.'],
+      roster: ['Creator roster', 'Profit and loss per creator: what the agency put in against the commission it earned.'],
+      battles: ['Live targets', 'Any stream or battle you point TokNomics at, with coin spikes in real time.'],
+      rankings: ['Rankings', 'TikTok LIVE leaderboards by region. Your roster is highlighted, so you can see whose rank needs defending.'],
+      team: ['Team', 'Who can see and manage which rosters.'],
+      billing: ['Plan & billing', 'Priced by roster size and team seats.'],
+      source: ['Data source', 'One Euler Stream connection for the whole agency. It feeds the ledger, live targets and P&L.'],
+    };
+    const NAV = [['overview', 'Overview', 'ph-squares-four'], ['ledger', 'Gifting ledger', 'ph-receipt'], ['roster', 'Creator roster', 'ph-users-three'], ['battles', 'Live targets', 'ph-broadcast'], ['rankings', 'Rankings', 'ph-ranking'], ['team', 'Team', 'ph-user-gear'], ['source', 'Data source', 'ph-plugs-connected'], ['billing', 'Plan & billing', 'ph-credit-card']];
+    const nav = NAV.map(([k, label, icon]) => ({ label, icon, onClick: () => this.go(k), bg: s.screen === k ? 'var(--color-accent-900)' : 'transparent', color: s.screen === k ? 'var(--color-accent-300)' : 'var(--color-neutral-300)', hasBadge: k === 'battles' && s.targets.length > 0, badge: s.targets.length }));
+
+    // overview
+    const statCards = [
+      { label: 'Total burn', icon: 'ph-fire', value: F(tot.invest), note: inRange.length + ' gifts sent, ' + rangeLabel },
+      { label: 'Commission generated', icon: 'ph-arrow-down-left', value: F(tot.comm), note: cutPct + '% agency cut of creator earnings' },
+      { label: 'Total net revenue', icon: 'ph-scales', value: this.Fs(net), note: tot.invest ? 'ROI ' + (net >= 0 ? '+' : '−') + Math.abs(Math.round(net / tot.invest * 100)) + '% on gifting spend' : 'No spend in range' },
+      { label: 'Creators in profit', icon: 'ph-users-three', value: inProfit + ' / ' + stats.length, note: (stats.length - inProfit) + ' running at a loss' },
+    ];
+    const nB = s.range === '24h' ? 24 : s.range === '7d' ? 7 : 15, bw = days * DAY / nB;
+    const raw = Array.from({ length: nB }, (_, i) => { const st = cutoff + i * bw; return { st, burn: inRange.filter(e => e.ts >= st && e.ts < st + bw).reduce((a, e) => a + e.coins * RATE_COIN, 0), comm: tot.comm / nB * (0.75 + 0.5 * (Math.sin(i * 1.7 + nB) + 1) / 2) }; });
+    const mx = Math.max(1, ...raw.flatMap(b => [b.burn, b.comm]));
+    const buckets = raw.map((b, i) => {
+      const d = new Date(b.st + bw / 2);
+      const lbl = s.range === '24h' ? String(d.getHours()).padStart(2, '0') + ':00' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const show = s.range === '24h' ? i % 6 === 0 : s.range === '30d' ? i % 3 === 0 : true;
+      return { burnH: (b.burn / mx * 100).toFixed(1) + '%', commH: (b.comm / mx * 100).toFixed(1) + '%', label: show ? lbl : '', title: lbl + ' — burn ' + F(b.burn) + ', commission ' + F(b.comm) };
+    });
+    const top = [...stats].sort((a, b) => b.invest - a.invest).slice(0, 5), topMax = Math.max(1, top[0] ? top[0].invest : 1);
+    const topSupported = top.map((x, i) => ({ ...cv(x), rank: i + 1, bar: (x.invest / topMax * 100).toFixed(1) + '%' }));
+    const teamRows = ['Team Nova', 'Team Atlas', 'Team Echo'].map(t => { const xs = stats.filter(x => x.c.team === t); const i = xs.reduce((a, x) => a + x.invest, 0), c = xs.reduce((a, x) => a + x.comm, 0); return { team: t, count: xs.length, invest: F(i), comm: F(c), net: this.Fs(c - i), netColor: c - i >= 0 ? 'var(--color-accent-300)' : 'var(--color-neutral-300)' }; }).filter(r => r.count > 0);
+    const cname = id => CREATORS.find(c => c.id === id).handle;
+    const feed = s.ledger.filter(e => ids.has(e.creatorId)).slice(0, 7).map(e => ({ id: e.id, sender: e.sender, creator: cname(e.creatorId), gift: e.gift + ' × ' + e.combo, ago: this.ago(e.ts), value: F(e.coins * RATE_COIN), onOpen: open(e.creatorId) }));
+
+    // ledger
+    const q = s.query.trim().toLowerCase();
+    const rows = inRange.filter(e => (s.purpose === 'All' || (s.purpose === 'Untagged' ? !e.purpose : e.purpose === s.purpose)) && (!q || (cname(e.creatorId) + ' ' + e.sender + ' ' + e.gift).toLowerCase().includes(q)));
+    this._rows = rows;
+    const retag = (id, p) => this.setState(st => ({ ledger: st.ledger.map(e => e.id === id ? { ...e, purpose: p } : e), openTag: null }));
+    const ledgerRows = rows.slice(0, s.limit).map(e => {
+      const isOpen = s.openTag === e.id;
+      return {
+        id: e.id, time: this.stamp(e.ts), sender: e.sender, creator: cname(e.creatorId), gift: e.gift + ' × ' + e.combo, coins: e.coins.toLocaleString(), value: F(e.coins * RATE_COIN),
+        purpose: e.purpose || 'Tag purpose', tagIcon: e.purpose ? PURPOSE_ICON[e.purpose] : 'ph-plus', tagClass: e.purpose ? 'tag tag-accent' : 'tag tag-outline', bw: e.purpose ? '0' : '1px',
+        open: isOpen, closed: !isOpen, onTag: () => this.setState({ openTag: e.id }), onOpen: open(e.creatorId),
+        options: [...PURPOSES.map(p => ({ label: p, on: () => retag(e.id, p) })), { label: 'Clear', on: () => retag(e.id, null) }],
+      };
+    });
+
+    // roster
+    const sorter = { net: (a, b) => b.net - a.net, invest: (a, b) => b.invest - a.invest, comm: (a, b) => b.comm - a.comm }[s.sort];
+    const rosterCards = [...stats].sort(sorter).map(cv);
+
+    // drawer
+    let d = {};
+    const dc = s.drawer && CREATORS.find(c => c.id === s.drawer);
+    if (dc) {
+      const x = statFor(dc), base = cv(x);
+      const pv = [...PURPOSES, null].map(p => ({ label: p || 'Untagged', v: x.es.filter(e => e.purpose === p).reduce((a, e) => a + e.coins * RATE_COIN, 0) }));
+      const pm = Math.max(1, ...pv.map(p => p.v));
+      d = {
+        ...base, cut: cutPct + '%', dmd: compact(x.dmd), investUsd: usd(x.invest), netUsd: (x.net >= 0 ? '+' : '') + usd(x.net),
+        purposes: pv.filter(p => p.v > 0).map(p => ({ label: p.label, value: F(p.v), pct: (p.v / pm * 100).toFixed(1) + '%' })),
+        recent: x.es.slice(0, 8).map(e => ({ gift: e.gift + ' × ' + e.combo, sender: e.sender, time: this.ago(e.ts), purpose: e.purpose || 'Untagged', value: F(e.coins * RATE_COIN) })),
+        noRecent: x.es.length === 0,
+      };
+    }
+
+    // battles
+    const targets = s.targets.map(t => {
+      const m = Math.max(1, ...t.series), el = Math.floor((s.now - t.started) / 1000);
+      return {
+        id: t.id, handle: t.handle, type: t.type, label: t.label, opponent: t.opponent, isBattle: t.type === 'Battle', isStream: t.type !== 'Battle',
+        isLive: t.live !== false, isOffline: t.live === false, roomId: t.roomId, onMod: () => this.openMod(t),
+        recheck: () => this.mcp('get_room_id', { unique_id: t.handle.slice(1) }).then(r => { this.setState(st => ({ targets: st.targets.map(y => y.id === t.id ? { ...y, live: r.is_live, roomId: r.room_id || y.roomId, started: Date.now() } : y) })); this.flash(r.is_live ? t.handle + ' is live' : t.handle + ' is still offline'); }).catch(e => this.flash(e.message)),
+        spark: t.series.map((v, i) => ({ h: (v / m * 100).toFixed(1) + '%', c: i === t.series.length - 1 ? 'var(--color-accent-300)' : 'var(--color-accent-700)' })),
+        coinsIn: F(t.coinsIn * RATE_COIN), agencyOut: F(t.agencyOut * RATE_COIN), viewers: t.viewers.toLocaleString(),
+        usScore: compact(t.us || 0), themScore: compact(t.them || 0), usPct: ((t.us || 0) + (t.them || 0) ? (t.us / (t.us + t.them) * 100) : 50).toFixed(1) + '%',
+        status: (t.us || 0) >= (t.them || 0) ? 'Leading' : 'Trailing', elapsed: mmss(el),
+        share: t.coinsIn ? Math.round(t.agencyOut / t.coinsIn * 100) + '%' : '0%',
+        onRemove: () => { this.syncTracked(t, false); this.setState(st => ({ targets: st.targets.filter(y => y.id !== t.id) })); this.flash('Stopped tracking ' + t.handle); },
+        syncMsg: t.syncMsg || '', hasSync: !!t.sync, syncColor: t.sync === 'err' ? 'var(--color-accent-200)' : t.sync === 'ok' ? 'var(--color-neutral-400)' : 'var(--color-neutral-500)', syncIcon: t.sync === 'err' ? 'ph ph-warning' : t.sync === 'ok' ? 'ph ph-check' : 'ph ph-circle-notch', retrySync: () => this.syncTracked(t, true),
+        syncErr: t.sync === 'err',
+      };
+    });
+    const ls = [...s.leaders].sort((a, b) => b.coins - a.coins), lm = ls[0].coins;
+    const leaders = ls.map((l, i) => ({ rank: i + 1, handle: l.handle, agency: l.agency, value: F(l.coins * RATE_COIN), bar: (l.coins / lm * 100).toFixed(1) + '%', barColor: l.agency ? 'var(--color-accent-500)' : 'var(--color-neutral-600)' }));
+    const L = s.addLook;
+    const tracked = new Set(s.targets.map(t => t.handle.toLowerCase()));
+    const rosterSet = new Set(CREATORS.map(c => c.handle.slice(1)));
+    const disc = {
+      region: s.disc.region, regions: REGIONS, loading: s.disc.loading, err: s.disc.err, ready: !s.disc.loading && !s.disc.err && !!s.disc.rooms,
+      onRegion: e => this.setState(st => ({ disc: { ...st.disc, region: e.target.value } }), () => this.loadFeed()), refresh: () => this.loadFeed(),
+      rooms: (s.disc.rooms || []).map(r => { const h = '@' + r.creator.unique_id, tr = tracked.has(h.toLowerCase()); return { handle: h, title: r.title, viewers: r.viewer_count.toLocaleString(), isRoster: rosterSet.has(r.creator.unique_id), tracked: tr, canTrack: !tr, onTrack: () => this.addTarget({ handle: h, type: 'Stream', opponent: '', label: r.title, roomId: r.room_id, anchorId: fakeId(r.creator.unique_id), live: true }) }; }),
+    };
+    const R = s.rk, curCat = R.catalog && R.catalog.find(x => x.region === R.region);
+    const rkRows = R.data ? R.data.ranks.map(x => { const h = '@' + x.unique_id, isR = rosterSet.has(x.unique_id), tr = tracked.has(h.toLowerCase()); return { rank: x.rank, handle: h, nickname: x.nickname, score: x.score.toLocaleString(), isRoster: isR, rankColor: isR ? 'var(--color-accent-300)' : 'var(--color-neutral-500)', tracked: tr, canTrack: !tr, onTrack: () => this.openAddFor(h) }; }) : [];
+    const rosterOn = rkRows.filter(r => r.isRoster);
+    const rk = {
+      region: R.region, regions: (R.catalog ? R.catalog.map(x => x.region) : ['US']).map(v => ({ v, label: v === 'WW' ? 'Worldwide' : v })),
+      rankOpts: RANKS.map(([v, l]) => ({ label: l, checked: R.rank === v, disabled: curCat ? !curCat.rank_names.includes(v) : false, on: () => this.setRk({ rank: v }) })),
+      isLeague: R.rank === 'RANKING_LEAGUE', league: R.league, leagues: curCat ? curCat.leagues : LEAGUES, date: R.date, hasDate: !!R.date,
+      onRegion: e => this.setRk({ region: e.target.value }), onLeague: e => this.setRk({ league: e.target.value }), onDate: e => this.setRk({ date: e.target.value }), clearDate: () => this.setRk({ date: '' }),
+      idle: !R.loading && !R.data && !R.err, loading: R.loading, err: R.err, ready: !R.loading && !R.err && !!R.data, retry: () => (R.catalog ? this.loadBoard() : this.loadCatalog()),
+      rows: rkRows, hasRoster: !R.loading && rosterOn.length > 0, noRoster: !R.loading && !!R.data && rosterOn.length === 0,
+      rosterNote: rosterOn.length + ' of your creators on this board: ' + rosterOn.map(r => r.handle + ' #' + r.rank).join(', '),
+      summary: R.data && !R.loading ? 'Top ' + R.data.ranks.length + ' of ' + R.data.total_ranks.toLocaleString() + ' · ' + (R.date || 'latest snapshot') : '',
+    };
+    const mt = s.modFor && s.targets.find(t => t.id === s.modFor);
+    let mv = {};
+    if (mt) {
+      const st = s.mod[mt.roomId], f = s.modForm, room = mt.roomId, busy = !!s.modBusy, sec = 'MS4wLjABAAAA' + mt.anchorId.slice(-8);
+      const act = (tool, args, fn, msg) => this.modAct(room, tool, args, fn, msg);
+      const needId = (k, v) => { if (!/^\d{5,20}$/.test(v.trim())) { this.setState(x => ({ modErr: { ...x.modErr, [k]: 'Enter a numeric TikTok user ID' } })); return false; } return true; };
+      const on = !!(st && st.comments);
+      mv = {
+        handle: mt.handle, roomId: mt.roomId, anchorId: mt.anchorId, loading: !st, failed: !!(st && st.error), error: (st && st.error) || '', ready: !!(st && !st.error), retry: () => this.loadMod(mt), busy,
+        commentsLabel: on ? 'Comments are on' : 'Comments are off', trackBg: on ? 'var(--color-accent-600)' : 'var(--color-neutral-800)', knobX: on ? '16px' : '0px',
+        toggleComments: () => act('toggle_room_comments', { room_id: room, enabled: !on }, x => ({ ...x, comments: !on }), on ? 'Comments turned off' : 'Comments turned on'),
+        muteId: f.muteId, onMuteId: e => this.setModForm({ muteId: e.target.value }), errMute: s.modErr.mute || '',
+        durOpts: DURS.map(([v, l]) => ({ label: l, checked: f.muteDur === v, on: () => this.setModForm({ muteDur: v }) })),
+        mute: () => { const id = f.muteId.trim(); if (!needId('mute', id)) return; const d = DURS.find(x => x[0] === f.muteDur); act('mutes-mute_room_user', { room_id: room, user_id: id, duration: Number(f.muteDur) }, x => ({ ...x, muted: [{ user_id: id, name: '', duration: d[1] }, ...x.muted.filter(m => m.user_id !== id)] }), 'Muted ' + id + ' · ' + d[1]); this.setModForm({ muteId: '' }); },
+        muted: st && st.muted ? st.muted.map(m => ({ label: m.name || 'User ' + m.user_id.slice(-6), sub: m.user_id + ' · ' + m.duration, action: 'Unmute', busy, on: () => act('mutes-unmute_room_user', { room_id: room, user_id: m.user_id }, x => ({ ...x, muted: x.muted.filter(y => y.user_id !== m.user_id) }), 'Unmuted ' + (m.name || m.user_id)) })) : [],
+        banId: f.banId, onBanId: e => this.setModForm({ banId: e.target.value }), errBan: s.modErr.ban || '',
+        ban: () => { const id = f.banId.trim(); if (!needId('ban', id)) return; act('bans-ban_room_user', { tiktok_user_id: id, room_id: room }, x => ({ ...x, banned: [{ user_id: id, name: '' }, ...x.banned] }), 'Kicked ' + id); this.setModForm({ banId: '' }); },
+        banned: st && st.banned ? st.banned.map(m => ({ label: m.name || 'User ' + m.user_id.slice(-6), sub: m.user_id, action: 'Unban', busy, on: () => act('bans-unban_room_user', { tiktok_user_id: m.user_id, room_id: room }, x => ({ ...x, banned: x.banned.filter(y => y.user_id !== m.user_id) }), 'Unbanned ' + (m.name || m.user_id)) })) : [],
+        modId: f.modId, onModId: e => this.setModForm({ modId: e.target.value }), errMod: s.modErr.mod || '',
+        addMod: () => { const id = f.modId.trim(); if (!needId('mod', id)) return; act('moderators-add_room_moderator', { to_user_id: id, anchor_id: mt.anchorId }, x => ({ ...x, mods: [...x.mods, { user_id: id, name: '' }] }), 'Moderator added'); this.setModForm({ modId: '' }); },
+        mods: st && st.mods ? st.mods.map(m => ({ label: m.name || 'User ' + m.user_id.slice(-6), sub: m.user_id, action: 'Remove', busy, on: () => act('moderators-remove_room_moderator', { to_user_id: m.user_id, anchor_id: mt.anchorId }, x => ({ ...x, mods: x.mods.filter(y => y.user_id !== m.user_id) }), 'Moderator removed') })) : [],
+        word: f.word, onWord: e => this.setModForm({ word: e.target.value }), errWord: s.modErr.word || '',
+        addWord: () => { const w = f.word.trim(); if (!w) return this.setState(x => ({ modErr: { ...x.modErr, word: 'Enter a word or phrase' } })); act('sensitive_words-add_sensitive_word', { word: w, sec_anchor_id: sec, room_id: room }, x => ({ ...x, words: [...x.words, { word_id: 'w' + Date.now(), word: w }] }), 'Added "' + w + '" to the filter'); this.setModForm({ word: '' }); },
+        words: st && st.words ? st.words.map(w => ({ word: w.word, busy, on: () => act('sensitive_words-delete_sensitive_word', { word_id: w.word_id, sec_anchor_id: sec, room_id: room }, x => ({ ...x, words: x.words.filter(y => y.word_id !== w.word_id) }), 'Removed "' + w.word + '"') })) : [],
+      };
+      mv.noMuted = mv.muted.length === 0; mv.noBanned = mv.banned.length === 0;
+      const words = st && st.words ? st.words.map(w => w.word.toLowerCase()) : [];
+      const mutedIds = new Set(st && st.muted ? st.muted.map(m => m.user_id) : []), bannedIds = new Set(st && st.banned ? st.banned.map(m => m.user_id) : []);
+      mv.chat = ((s.chat || {})[mt.id] || []).slice(0, 12).map(c => {
+        const flagged = words.some(w => c.comment.toLowerCase().includes(w)), gone = mutedIds.has(c.userId) || bannedIds.has(c.userId);
+        return {
+          id: c.id, user: '@' + c.user, comment: c.comment, ago: this.ago(c.ts), flagged, canAct: !gone, gone, goneLabel: bannedIds.has(c.userId) ? 'Kicked' : 'Muted', busy,
+          commentColor: flagged ? 'var(--color-accent-300)' : 'var(--color-neutral-200)',
+          mute: () => act('mutes-mute_room_user', { room_id: room, user_id: c.userId, duration: 300, comment_msg_id: c.id.replace(/\D/g, '') }, x => ({ ...x, muted: [{ user_id: c.userId, name: '@' + c.user, duration: '5 min' }, ...x.muted.filter(m => m.user_id !== c.userId)] }), 'Muted @' + c.user + ' · 5 min'),
+          kick: () => act('bans-ban_room_user', { tiktok_user_id: c.userId, comment_msg_id: c.id, room_id: room }, x => ({ ...x, banned: [{ user_id: c.userId, name: '@' + c.user }, ...x.banned.filter(m => m.user_id !== c.userId)] }), 'Kicked @' + c.user),
+        };
+      });
+      mv.noChat = mv.chat.length === 0;
+    }
+    const add = s.add, setAdd = (k, v) => this.setState(st => ({ add: { ...st.add, [k]: v }, addErr: { ...st.addErr, [k]: undefined } }));
+
+    // team
+    const members = s.members.map(m => ({
+      ...m, isFounder: m.role === 'Founder', notFounder: m.role !== 'Founder',
+      creators: m.role === 'Founder' ? CREATORS.length : CREATORS.filter(c => c.team === m.team).length,
+      onRole: e => this.setState(st => ({ members: st.members.map(y => y.id === m.id ? { ...y, role: e.target.value } : y) })),
+      onTeam: e => this.setState(st => ({ members: st.members.map(y => y.id === m.id ? { ...y, team: e.target.value } : y) })),
+      onRemove: () => { this.setState(st => ({ members: st.members.filter(y => y.id !== m.id) })); this.flash(m.name + ' removed'); },
+    }));
+    const inv = s.inv, setInv = (k, v) => this.setState(st => ({ inv: { ...st.inv, [k]: v }, invErr: '' }));
+
+    // billing
+    const cur = TIERS.find(t => t.name === s.plan);
+    const tiers = TIERS.map(t => ({ ...t, current: t.name === s.plan, notCurrent: t.name !== s.plan, shadow: t.name === s.plan ? '0 0 0 1px var(--color-accent)' : 'var(--shadow-sm)', onPick: () => this.setState({ planPick: t.name }) }));
+    const pick = s.planPick && TIERS.find(t => t.name === s.planPick);
+    const warnings = [];
+    if (pick) {
+      if (CREATORS.length > pick.limit) warnings.push('You track ' + CREATORS.length + ' creators. ' + pick.short + ' allows ' + pick.limit + '; tracking pauses for the rest.');
+      if (!pick.multi && s.members.length > 1) warnings.push('Multi-seat team access is a Scale feature. ' + (s.members.length - 1) + ' teammates will lose access.');
+    }
+
+    // data source
+    const c = s.conn, isAdmin = s.viewAs === 'Founder', oauth = c.mode === 'oauth';
+    const host = c.host.trim() || '<host>';
+    const url = 'https://' + host + '/mcp?' + (oauth ? 'oauth=true&' : '') + 'apiKey=YOUR_API_KEY' + (oauth && c.pinned.trim() ? '&pinned_user_id=' + c.pinned.trim() : '');
+    const configJson = JSON.stringify({ mcpServers: { 'euler-stream': s.cfgStyle === 'direct' ? { url } : { command: 'npx', args: ['mcp-remote', url] } } }, null, 2);
+    const ST = { connected: ['Connected', 'var(--color-accent-400)', 'tn-pulse 2.4s ease-in-out infinite'], authorizing: ['Authorizing…', 'var(--color-accent-200)', 'tn-pulse .9s ease-in-out infinite'], disconnected: ['Disconnected', 'var(--color-neutral-600)', 'none'] }[c.status];
+    const connected = c.status === 'connected';
+    const since = Math.floor((s.now - c.since) / 60000);
+    const src = {
+      statusLabel: ST[0], dot: ST[1], anim: ST[2], modeLabel: oauth ? 'OAuth' : 'Cookie', account: c.account,
+      barRight: connected ? 'Last event ' + this.ago(c.lastEvent) + ' · ' + c.events.toLocaleString() + ' events ingested' : c.status === 'authorizing' ? 'Waiting for authorization' : 'Live ingestion paused — ledger and targets are not updating',
+      connected, notConnected: !connected, authorizing: c.status === 'authorizing', idle: c.status === 'disconnected',
+      sinceLabel: connected ? (since >= 60 ? Math.floor(since / 60) + 'h ' + (since % 60) + 'm' : since + 'm') : '—',
+      events: c.events.toLocaleString(), last: connected ? this.ago(c.lastEvent) : '—',
+      host: c.host, apiKey: isAdmin ? c.apiKey : '•'.repeat(10) + c.apiKey.slice(-4), pinned: c.pinned, cookie: c.cookie,
+      isOauth: oauth, isCookie: !oauth, isAdmin, notAdmin: !isAdmin, cookieEditable: !oauth && isAdmin, cookieLocked: !oauth && !isAdmin,
+      errHost: s.connErr.host || '', errKey: s.connErr.apiKey || '', errCookie: s.connErr.cookie || '',
+      modes: [
+        { label: 'OAuth', sub: 'Recommended', checked: oauth, disabled: false, locked: false, on: () => { if (!oauth) { this.setConn({ mode: 'oauth', status: 'disconnected' }); this.flash('Switched to OAuth. Reconnect to resume.'); } } },
+        { label: 'Cookie', sub: 'Founders only', checked: !oauth, disabled: !isAdmin, locked: !isAdmin, on: () => { if (oauth && isAdmin) { this.setConn({ mode: 'cookie', status: 'disconnected' }); this.flash('Switched to Cookie mode. Reconnect to resume.'); } } },
+      ].map(m => ({ ...m, opacity: m.disabled ? 0.45 : 1 })),
+      onHost: e => this.setConn({ host: e.target.value }), onKey: e => this.setConn({ apiKey: e.target.value }),
+      onPinned: e => this.setConn({ pinned: e.target.value }), onCookie: e => this.setConn({ cookie: e.target.value }),
+      connectLabel: oauth ? 'Authorize with Euler OAuth' : 'Connect with cookies',
+      connect: this.connect,
+      disconnect: () => { this.setConn({ status: 'disconnected' }); this.flash('Disconnected from Euler Stream'); },
+      test: () => this.flash('Connection healthy · ' + (180 + Math.floor(Math.random() * 90)) + ' events/min'),
+      url, configJson, copyUrl: () => this.copy(url, 'Endpoint URL'), copyConfig: () => this.copy(configJson, 'Client config'),
+      accounts: ['@northlight.ops', '@tn.vault', '@kai.founder'].map(a => ({ handle: a, on: () => this.pickAccount(a) })),
+    };
+
+    return {
+      src: {
+        ...src,
+        cfgOpts: [['remote', 'mcp-remote'], ['direct', 'Direct URL']].map(([v, l]) => ({ label: l, checked: s.cfgStyle === v, on: () => this.setState({ cfgStyle: v }) })),
+        toolCount: TOOL_GROUPS.reduce((a, g) => a + g[3].length, 0),
+        toolGroups: TOOL_GROUPS.map(([name, where, auth, tools]) => ({ name, where, auth, header: oauth ? 'x-oauth-token' : 'x-cookie-header', tools })),
+        calls: s.calls.map(k => ({ id: k.id, tool: k.tool, args: k.args || 'no arguments', ms: k.ms + ' ms', icon: k.ok ? 'ph-check-circle' : 'ph-x-circle', color: k.ok ? 'var(--color-accent-400)' : 'var(--color-neutral-500)', hasAuth: !!k.auth, auth: k.auth })),
+        noCalls: s.calls.length === 0,
+        g: (() => {
+          const G = s.gifts, q = G.q.trim().toLowerCase(), list = (G.list || []).filter(x => !q || x.name.toLowerCase().includes(q));
+          return {
+            loading: G.loading, err: G.err, ready: !!G.list && !G.loading, q: G.q, onQ: e => this.setState(st => ({ gifts: { ...st.gifts, q: e.target.value } })), sync: () => this.loadGifts(),
+            summary: G.list ? G.list.length + ' gifts · synced ' + this.ago(G.syncedAt) : 'Not synced',
+            rows: list.map(x => { const n = s.ledger.filter(e => e.gift === x.name).length; return { name: x.name, id: x.id, coins: x.diamond_count.toLocaleString(), usd: '$' + (x.diamond_count * RATE_COIN).toFixed(x.diamond_count * RATE_COIN < 10 ? 2 : 0), used: n ? 'Sent ' + n + '×' : '', isUsed: n > 0 }; }),
+          };
+        })(),
+        sockets: s.targets.map(t => ({ handle: t.handle, live: t.live !== false, status: t.live === false ? 'Closed 4404 NOT_LIVE · rechecking' : connected ? 'Open · ' + (() => { const m = Math.floor((s.now - t.started) / 60000); return (m >= 60 ? Math.floor(m / 60) + 'h ' : '') + (m % 60) + 'm of 8h'; })() : 'Closed 1000 NORMAL · paused', dot: t.live === false || !connected ? 'var(--color-neutral-600)' : 'var(--color-accent-400)', events: t.live === false ? '—' : t.series.filter(v => v > 0).length * 7 + ' events' })),
+        noSockets: s.targets.length === 0,
+        snipOpts: [['ws', 'Hosted WebSocket'], ['jwt', 'Frontend JWT'], ['connector', 'tiktok-live-connector'], ['sdk', 'tiktok-live-api-sdk']].map(([v, l]) => ({ label: l, checked: (s.snipTab || 'ws') === v, on: () => this.setState({ snipTab: v }) })),
+        isSdk: s.snipTab === 'sdk',
+        langOpts: [['ts', 'TypeScript'], ['py', 'Python'], ['cs', 'C#'], ['java', 'Java'], ['go', 'Go']].map(([v, l]) => ({ label: l, checked: (s.sdkLang || 'ts') === v, on: () => this.setState({ sdkLang: v }) })),
+        onboard: (() => {
+          const hasKey = !!c.apiKey.trim();
+          const steps = [
+            { title: 'Sign up', body: 'Create a free Euler Stream account with email or a social login.', link: 'https://www.eulerstream.com/register', linkLabel: 'eulerstream.com/register', done: hasKey },
+            { title: 'Get your API key', body: 'In the Euler dashboard, create a key and paste it into API key below.', link: 'https://www.eulerstream.com/dashboard', linkLabel: 'Open Euler dashboard', done: hasKey },
+            { title: 'Connect TokNomics', body: isAdmin ? 'Authorize with OAuth to start live ingestion for the agency.' : 'Ask a Founder to finish setup. Only Founders can add credentials.', link: '', linkLabel: '', done: connected },
+          ].map((x, i) => ({ ...x, n: i + 1, hasLink: !!x.link, notDone: !x.done, dotBg: x.done ? 'var(--color-accent-800)' : 'transparent', dotColor: x.done ? 'var(--color-accent-200)' : 'var(--color-neutral-400)', dotRing: x.done ? 'none' : 'inset 0 0 0 1px var(--color-neutral-700)' }));
+          return { show: !connected || !hasKey, steps, left: steps.filter(x => !x.done).length + ' of 3 steps left' };
+        })(),
+        closeCodes: CLOSE_CODES.map(([code, name, action]) => ({ code, name, action })),
+        snippet: this._snip = (s.snipTab || 'ws') === 'ws' ? SNIP_WS : s.snipTab === 'jwt' ? SNIP_JWT : s.snipTab === 'sdk' && (s.sdkLang || 'ts') !== 'ts' ? SNIP_SDK[s.sdkLang] : s.snipTab === 'connector' ? '// npm i tiktok-live-connector@2.5.0\nimport { TikTokLiveConnection, WebcastEvent, UserOfflineError } from "tiktok-live-connector";\n\nconst AGENCY = new Set(["tn.vault", "tn.ops.01", "tn.ops.02", "kai.founder"]);\n\nconst connection = new TikTokLiveConnection("' + (s.targets[0] ? s.targets[0].handle.slice(1) : 'nova_shift') + '", {\n  signApiKey: process.env.EULER_API_KEY,\n  enableExtendedGiftInfo: true, // gift events carry extendedGiftInfo (name, diamond_count)\n});\n\nlet roomId;\nconnection.connect().then((state) => {\n  roomId = state.roomId;\n  console.info(`Connected to roomId ${roomId}`);\n}).catch((err) => {\n  if (err instanceof UserOfflineError) return scheduleRecheck(); // poll get_room_id\n  console.error("Failed to connect", err);\n});\n\n// Chat feeds the moderation panel; msgId is passed as comment_msg_id on mute/ban\nconnection.on(WebcastEvent.CHAT, (data) => {\n  chat.push({ roomId, userId: data.user?.userId, uniqueId: data.user?.uniqueId, comment: data.comment, msgId: data.common?.msgId });\n});\n\nconnection.on(WebcastEvent.GIFT, (data) => {\n  if (data.giftDetails?.giftType === 1 && !data.repeatEnd) return; // streak still running\n  if (!AGENCY.has(data.user?.uniqueId)) return;                    // agency outlay only\n  ledger.insert({\n    roomId,\n    sender: data.user.uniqueId,\n    giftId: data.giftId,\n    gift: data.giftDetails?.giftName,\n    combo: data.repeatCount,\n    coins: (data.extendedGiftInfo?.diamond_count ?? 0) * data.repeatCount,\n    ts: Date.now(),\n  });\n});' : 'import EulerStreamApiClient from "tiktok-live-api-sdk";\n\nconst client = new EulerStreamApiClient({ apiKey: process.env.EULER_API_KEY });\n\n// Price every ledger gift from the live catalog\nconst catalog = await client.gifts.listWebcastGifts();\n\n// Resolve a creator before tracking them\nconst user = await client.tikTokUsers.retrieveTikTokUserBasic("' + (s.targets[0] ? s.targets[0].handle.slice(1) : 'nova_shift') + '");\n\n// Business plan: open one WebSocket per tracked live target\nconst webcast = await client.anchors.fetchWebcastURLByUniqueId("' + (s.targets[0] ? s.targets[0].handle.slice(1) : 'nova_shift') + '");',
+      },
+      isSource: s.screen === 'source', goSource: () => this.go('source'), copySnippet: () => this.copy(this._snip, 'SDK snippet'),
+      isRankings: s.screen === 'rankings', rk, disc,
+      modOpen: !!mt, mv, closeMod: () => this.setState({ modFor: null }),
+      pickerOpen: s.pickerOpen, closePicker: () => { this.setState({ pickerOpen: false }); this.setConn({ status: 'disconnected' }); },
+      viewOpts: ['Founder', 'Manager'].map(v => ({ label: v, checked: s.viewAs === v, on: () => this.setState({ viewAs: v }) })),
+      showTexture: this.props.showTexture ?? true, nav,
+      title: titles[s.screen][0], subtitle: titles[s.screen][1], rangeLabel,
+      showFilters: ['overview', 'ledger', 'roster'].includes(s.screen), showUnit: !['team', 'billing', 'source', 'rankings'].includes(s.screen),
+      team: s.team, tier: s.tier,
+      onTeam: e => this.setState({ team: e.target.value, limit: 40 }), onTier: e => this.setState({ tier: e.target.value, limit: 40 }),
+      rangeOpts: this.opts(['24h', '7d', '30d'], s.range, 'range'),
+      unitOpts: this.opts(['usd', 'coins', 'diamonds'], s.unit, 'unit', ['USD', 'Coins', 'Diamonds']),
+      isOverview: s.screen === 'overview', isLedger: s.screen === 'ledger', isRoster: s.screen === 'roster', isBattles: s.screen === 'battles', isTeam: s.screen === 'team', isBilling: s.screen === 'billing',
+      statCards, buckets, topSupported, teamRows, feed,
+      goRoster: () => this.setState({ screen: 'roster' }), goLedger: () => this.setState({ screen: 'ledger' }),
+      query: s.query, onQuery: e => this.setState({ query: e.target.value, limit: 40 }),
+      purposeOpts: this.opts(['All', ...PURPOSES, 'Untagged'], s.purpose, 'purpose', ['All', 'Battle', 'Drop', 'Milestone', 'Retention', 'Untagged']),
+      ledgerSummary: rows.length + ' gifts · ' + F(rows.reduce((a, e) => a + e.coins * RATE_COIN, 0)),
+      ledgerRows, hasMore: rows.length > s.limit, ledgerEmpty: rows.length === 0, loadMore: () => this.setState(st => ({ limit: st.limit + 40 })), exportCsv: this.exportCsv,
+      rosterSummary: stats.length + ' creators · ' + inProfit + ' in profit · ' + rangeLabel,
+      sortOpts: this.opts(['net', 'invest', 'comm'], s.sort, 'sort', ['Net margin', 'Investment', 'Commission']), rosterCards,
+      drawerOpen: !!dc, d, closeDrawer: () => this.setState({ drawer: null }),
+      battleSummary: s.targets.length + ' streams tracked · updates every ' + ((this.props.liveSpeed ?? 3000) / 1000) + 's',
+      targets, noTargets: s.targets.length === 0, leaders,
+      addOpen: s.addOpen, openAdd: () => this.setState({ addOpen: true, addErr: {}, addLook: null, add: { handle: '', type: 'Battle', opponent: '', label: '' } }), closeAdd: () => this.setState({ addOpen: false }), submitAdd: this.submitAdd,
+      stop: e => e.stopPropagation(),
+      add: {
+        handle: add.handle, opponent: add.opponent, label: add.label, isBattle: add.type === 'Battle',
+        lookup: this.lookup, looking: !!(L && L.loading), lookErr: (L && L.error) || '', hasProfile: !!(L && L.user_id),
+        p: L && L.user_id ? { nickname: L.nickname, handle: L.handle, region: L.region, userId: L.user_id, mono: L.unique_id.slice(0, 2).toUpperCase(), liveLabel: L.is_live ? 'Live' : 'Offline', liveClass: L.is_live ? 'tag tag-accent' : 'tag tag-neutral', room: L.is_live ? 'Room ' + L.room_id : 'Not live right now' } : {},
+        noProfile: !(L && L.user_id), submitLabel: L && L.user_id && !L.is_live ? 'Track when live' : 'Start tracking',
+        errHandle: s.addErr.handle || '', errOpponent: s.addErr.opponent || '',
+        onHandle: e => { setAdd('handle', e.target.value); this.setState({ addLook: null }); }, onOpponent: e => setAdd('opponent', e.target.value), onLabel: e => setAdd('label', e.target.value),
+        types: ['Battle', 'Stream'].map(v => ({ label: v, checked: add.type === v, on: () => setAdd('type', v) })),
+      },
+      teamSummary: s.members.length + ' members · ' + cur.short + ' plan',
+      members, roles: ROLES,
+      inviteOpen: s.inviteOpen, openInvite: () => this.setState({ inviteOpen: true, invErr: '' }), closeInvite: () => this.setState({ inviteOpen: false }), submitInvite: this.submitInvite,
+      inv: { email: inv.email, team: inv.team, err: s.invErr, onEmail: e => setInv('email', e.target.value), onTeam: e => setInv('team', e.target.value), roles: ['Manager', 'Moderator'].map(v => ({ label: v, checked: inv.role === v, on: () => setInv('role', v) })) },
+      plan: { name: cur.name, price: cur.price },
+      usage: { creators: CREATORS.length + ' of ' + (cur.limit === Infinity ? 'unlimited' : cur.limit), creatorPct: (cur.limit === Infinity ? 24 : Math.min(100, CREATORS.length / cur.limit * 100)) + '%', seats: cur.multi ? s.members.length + ' seats' : '1 seat' },
+      tiers, planOpen: !!pick, pd: { name: pick ? pick.name : '', price: pick ? pick.price : '', warnings },
+      closePlan: () => this.setState({ planPick: null }),
+      confirmPlan: () => { this.setState({ plan: s.planPick, planPick: null }); this.flash('Plan switched to ' + pick.short); },
+      hasToast: !!s.toast, toast: s.toast,
+    };
+  }
+}
+</script>
+</body>
+</html>
