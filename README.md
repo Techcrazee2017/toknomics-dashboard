@@ -1,25 +1,76 @@
-# CODING AGENTS: READ THIS FIRST
+# TokNomics
 
-This is a **handoff bundle** from Claude Design (claude.ai/design).
+Agency ledger and P&L for TikTok LIVE: every coin your gifter accounts send to your creators, against the commission those creators earn. It's built from the Claude Design handoff in `project/` (prototype: `project/TokNomics Dashboard.dc.html`; intent: `chats/`).
 
-A user mocked up designs in HTML/CSS/JS using an AI design tool, then exported this bundle so a coding agent can implement the designs for real.
+```
+web (Vite/React) ──anon key + user JWT──▶ Supabase (Postgres + RLS + Realtime)
+     │                                          ▲            ▲
+     └──Bearer JWT──▶ backend/api (Hono) ───────┘            │ service role
+                         │  Euler REST (per-agency key,      │
+                         │  OAuth token / cookie, sealed)    │
+                         ▼                                    │
+                    Euler Stream ◀──wss── backend/worker ────┘
+```
 
-## What you should do — IMPORTANT
+| Path | What |
+| --- | --- |
+| `web/` | The dashboard: 8 screens, creator drawer, moderation drawer, dialogs, all on the Nocturne CSS (`web/src/styles/nocturne.css` is a verbatim copy of the design system). |
+| `backend/src/api/` | API server. It's the only holder of Euler credentials: it proxies the 19 Euler tools, runs the OAuth and cookie connect flows, mints 60s chat JWTs, sends team invites and handles Stripe billing. |
+| `backend/src/worker.ts` | Ingestion. It opens one Euler WebSocket per tracked creator (including battle opponents), books gifts, and records viewers and socket state. |
+| `shared/` | zod contracts and constants used by both sides (tool schemas, plans, purposes, close codes). |
+| `supabase/migrations/` | Schema, RLS, column grants, stats RPCs. `supabase/tests/` has the RLS/RPC assertion suite. |
 
-**Read the chat transcripts first.** There are 2 chat transcript(s) in `chats/`. The transcripts show the full back-and-forth between the user and the design assistant — they tell you **what the user actually wants** and **where they landed** after iterating. Don't skip them. The final HTML files are the output, but the chat is where the intent lives.
+## Run locally
 
-**Find the primary design file under `project/` and read it top to bottom.** The chat transcripts will tell you which file the user was last iterating on. Then **follow its imports**: open every file it pulls in (shared components, CSS, scripts) so you understand how the pieces fit together before you start implementing.
+```bash
+npm install
+npx supabase start                        # local stack; applies supabase/migrations
+cp backend/.env.example backend/.env       # fill from `npx supabase status`; CREDENTIALS_KEY=$(openssl rand -base64 32)
+cp web/.env.example web/.env.local
+npm run dev:api & npm run dev:worker & npm run dev:web
+```
 
-**If anything is ambiguous, ask the user to confirm before you start implementing.** It's much cheaper to clarify scope up front than to build the wrong thing.
+**No Euler account?** Run `npm run fake-euler -w backend`. Then set `EULER_API_BASE=http://127.0.0.1:8799`, `EULER_WS_URL=ws://127.0.0.1:8799` and `EULER_OAUTH_AUTHORIZE_URL=http://127.0.0.1:8799/oauth/authorize` (plus any client id and secret) in `backend/.env`. It serves the same REST paths and v2 WebSocket frames as the real service, with gifts, streaks, chat and viewer counts. Handles containing `off` are never live.
 
-## About the design files
+First run: sign in with a magic link (local emails are at http://127.0.0.1:54324), then create your agency. Then go to **Data source**:
 
-The design medium is **HTML/CSS/JS** — these are prototypes, not production code. Your job is to **recreate them pixel-perfectly** in whatever technology makes sense for the target codebase (React, Vue, native, whatever fits). Match the visual output; don't copy the prototype's internal structure unless it happens to fit.
+1. Paste the API key and authorize.
+2. Add your **gifter accounts**. A gift only reaches the ledger when its sender is one of these accounts.
+3. Resync the gift catalog.
 
-**Don't render these files in a browser or take screenshots unless the user asks you to.** Everything you need — dimensions, colors, layout rules — is spelled out in the source. Read the HTML and CSS directly; a screenshot won't tell you anything they don't.
+After that, add creators on **Creator roster**.
 
-## Bundle contents
+## Tests
 
-- `README.md` — this file
-- `chats/` — conversation transcripts (read these!)
-- `project/` — the `Form design priorities` project files (HTML prototypes, assets, components)
+```bash
+npm run typecheck && npm test               # shared 5, backend 28, web 6
+PGHOST=… PGPORT=… PGUSER=postgres npm run test:db   # 26 RLS/RPC assertions on plain Postgres
+npm run verify -w backend                   # 16-step closed loop against a Supabase project (dev/staging only)
+```
+
+## How the numbers work
+
+- **Coins** for a gift = the gift's coin price × repeat count. Streak ticks are skipped and only `repeatEnd` is booked.
+- **Agency burn** = coins sent by the agency's gifter accounts × the coin rate (USD).
+- **Creator diamonds** = coins of *all* gifts the creator received while tracked. TikTok credits one diamond per coin.
+- **Commission** = diamonds × the diamond rate (USD) × the agency cut. **Net** = commission − burn.
+
+Rates and the cut are per agency (Data source → Ledger, Founders only). Income is only counted while a creator is tracked, so creators that aren't tracked show no commission.
+
+## Roles
+
+| | Founder | Manager | Moderator |
+|---|---|---|---|
+| Ledger, P&L, rankings | ✓ | ✓ | ✓ |
+| Tag gift purposes, moderate rooms | ✓ | ✓ | ✓ |
+| Roster, live targets, gifter accounts, catalog sync | ✓ | ✓ | |
+| API key, cookie mode, connect/disconnect, rates, team, billing | ✓ | | |
+
+RLS enforces the same rules (`supabase/migrations/0002_app.sql`). Team scope sets a member's default roster filter. Data access is per agency, not per team.
+
+## Production notes
+
+- **Euler OAuth.** Register `$API_PUBLIC_URL/api/euler/oauth/callback` and set `EULER_OAUTH_AUTHORIZE_URL` from your Euler OAuth app. Euler's SDK doesn't publish the authorize URL. A pinned user ID is passed as `login_user_id`.
+- **Stripe.** Create three prices (`STRIPE_PRICE_*`) and point a webhook at `/api/stripe/webhook` with these events: `checkout.session.completed` and `customer.subscription.*`. The webhook is the only writer of `agencies.plan`. The roster limit is enforced by a DB trigger, and seats by the invite endpoint.
+- **`CREDENTIALS_KEY`** encrypts Euler keys, cookies and tokens (AES-256-GCM, bound to the agency id). If you lose it, Founders have to re-enter their credentials.
+- **Run one worker.** Several replicas would open duplicate sockets. Inserts are idempotent on `(agency_id, msg_id)`, but you'd double your Euler socket usage.
