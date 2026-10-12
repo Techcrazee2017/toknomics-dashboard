@@ -3,8 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "api": "tsx --env-file=.env src/api/server.ts",
-    "worker": "tsx --env-file=.env src/worker.ts",
+    "api": "tsx --env-file-if-exists=.env src/api/server.ts",
+    "worker": "tsx --env-file-if-exists=.env src/worker.ts",
     "verify": "tsx --env-file=.env scripts/verify-gift-pipeline.ts",
     "typecheck": "tsc -p .",
     "test": "vitest run",
