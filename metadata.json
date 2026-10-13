@@ -1,0 +1,6 @@
+{
+  "name": "TokNomics Dashboard",
+  "description": "TikTok Live streaming analytics and agency operations dashboard for tracking diamonds, gifts, creators, and battles.",
+  "permissions": [],
+  "capabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

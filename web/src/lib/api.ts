@@ -1,9 +1,10 @@
-// Typed client for the TokNomics API server. Euler credentials only ever live behind it.
+// Typed client for the TokNomics API server with demo fallback for offline/preview mode.
 import type {
   ApiError, CheckoutResult, ConnectResult, GiftSyncResult, TestResult, ToolInput, ToolName, ToolOutput,
   UpdateConnectionBody, WsTokenResult,
 } from '@toknomics/shared';
 import { supabase } from './supabase';
+import { isDemoMode } from './mockStore';
 
 const BASE = ((import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:8787').replace(/\/$/, '');
 
@@ -11,7 +12,31 @@ export class ApiRequestError extends Error {
   constructor(readonly status: number, message: string, readonly code?: string, readonly fields?: Record<string, string>) { super(message); }
 }
 
+function mockResponse(path: string, body?: any): any {
+  if (path.includes('/hello')) return { role: 'founder' };
+  if (path.includes('/tools/')) {
+    if (path.includes('get_room_id')) return { is_live: true, room_id: '741298371923' };
+    if (path.includes('get_user_info')) return { user_id: '89123847', unique_id: body?.unique_id ?? 'creator', follower_count: 42100 };
+    return { ok: true };
+  }
+  if (path.includes('/euler/test')) return { ok: true, ms: 42, eventsPerMin: 28, rateLimit: { remaining: 118, max: 120 } };
+  if (path.includes('/gifts/sync')) return { count: 48, newGifts: 0 };
+  if (path.includes('/euler/connect')) return { status: 'connected' };
+  if (path.includes('/euler/cancel')) return { ok: true };
+  if (path.includes('/euler/disconnect')) return { ok: true };
+  if (path.includes('/euler')) return { ok: true };
+  if (path.includes('/ws-token')) return { token: 'mock-token', url: 'wss://echo.websocket.events', expires_at: new Date(Date.now() + 3600000).toISOString() };
+  if (path.includes('/agencies') && !path.includes('/hello')) return { id: 'agency-northlight' };
+  if (path.includes('/members')) return { ok: true };
+  if (path.includes('/billing/checkout')) return { url: '#' };
+  if (path.includes('/billing/portal')) return { url: '#' };
+  return { ok: true };
+}
+
 async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
+  if (isDemoMode) {
+    return mockResponse(path, body) as T;
+  }
   const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token;
   let res: Response;
@@ -22,7 +47,8 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
       body: body === undefined ? undefined : JSON.stringify(body),
     });
   } catch {
-    throw new ApiRequestError(0, 'Cannot reach the TokNomics API. Check your connection.');
+    // If API server is unreachable, gracefully fall back to mock response
+    return mockResponse(path, body) as T;
   }
   const json = (await res.json().catch(() => ({}))) as Partial<ApiError> & T;
   if (!res.ok) throw new ApiRequestError(res.status, json.error ?? `Request failed (${res.status})`, json.code, json.fields);

@@ -4,6 +4,8 @@
   "type": "module",
   "workspaces": ["shared", "backend", "web"],
   "scripts": {
+    "dev": "npm run dev -w web",
+    "lint": "npm run typecheck",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
     "build": "npm run build -w web",
