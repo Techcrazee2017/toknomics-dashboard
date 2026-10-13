@@ -184,8 +184,8 @@ function Discover() {
       {feed.error && <div style={{ color: 'var(--color-neutral-400)', padding: 'var(--space-3) 0' }}>{(feed.error as Error).message}</div>}
       {feed.data && !feed.isFetching && (
         <div style={{ display: 'flex', flexDirection: 'column' }}>
-          {feed.data.rooms.length === 0 && <Empty>No rooms in this sample.</Empty>}
-          {feed.data.rooms.slice(0, 10).map(r => (
+          {(feed.data.rooms ?? []).length === 0 && <Empty>No rooms in this sample.</Empty>}
+          {(feed.data.rooms ?? []).slice(0, 10).map(r => (
             <div key={r.room_id} style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto auto', gap: 'var(--space-4)', alignItems: 'center', padding: '8px 0' }} className="tn-rowline">
               <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
                 <span className="tn-row-8" style={{ gap: 6 }}>{at(r.creator.unique_id)}{roster.has(r.creator.unique_id) && <span className="tag tag-accent tn-tag-sm">Roster</span>}</span>
