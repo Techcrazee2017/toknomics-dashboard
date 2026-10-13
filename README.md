@@ -73,7 +73,7 @@ RLS enforces the same rules (`supabase/migrations/0002_app.sql`). Team scope set
 The app is two deployables, because the ingestion worker holds persistent Euler WebSockets and can't run serverless.
 
 - **Web → Vercel.** Import the repo with the root directory left at the repo root; `vercel.json` sets the install, build, output dir and SPA rewrites. Set `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` and `VITE_API_URL` (the API's public URL) for Production and Preview. They're inlined at build time, so redeploy after changing them.
-- **API + worker → a long-running Node host** (Render, Railway, Fly.io, a VM). Run `npm ci && npm run api -w backend` and `npm run worker -w backend` as two services with the vars from `backend/.env.example`. Set `WEB_ORIGIN` to the Vercel URL (CORS allows exactly that origin) and `API_PUBLIC_URL` to the API's own URL.
+- **API + worker → a long-running Node host** (Render, Railway, Fly.io, a VM). Build with `npm ci --include=dev` and start with `npm start -w backend`, which runs the API and the worker in one process (health check: `/api/health`). Use an always-on instance: a host that sleeps idle services drops the Euler sockets. Set the vars from `backend/.env.example`. You can also run `npm run api -w backend` and `npm run worker -w backend` as two services. Set `WEB_ORIGIN` to the Vercel URL (CORS allows exactly that origin) and `API_PUBLIC_URL` to the API's own URL.
 - **Supabase Auth.** Add the Vercel URL to Site URL / Redirect URLs, or magic links will bounce.
 
 ## Production notes
