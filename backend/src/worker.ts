@@ -291,7 +291,7 @@ class Supervisor {
   stopAll() { for (const c of this.conns.values()) c.stop(); }
 }
 
-async function main() {
+export async function main() {
   need('CREDENTIALS_KEY');
   const db = serviceClient();
   const gifts = new GiftBuffer(db);
