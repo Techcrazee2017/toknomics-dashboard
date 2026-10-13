@@ -1,0 +1,134 @@
+- name: Cloud Functions Deploy
+  # You may pin to the exact commit or the version.
+  # uses: google-github-actions/deploy-cloud-functions@b418957976ca9302f13bf31bd06aa0256b8263e1
+  uses: google-github-actions/deploy-cloud-functions@v2.1.0
+  with:
+    # Name of the Cloud Function.
+    name: 
+    # Description for the Cloud Function.
+    description: # optional
+    # ID of the project in which to deploy the Cloud Function.
+    project_id: # optional
+    # Region to deploy the function in. Defaults to us-central1, if not specified.
+    region: # optional, default is us-central1
+    # Path to function deployment directory within the source repo.
+    source_dir: # optional, default is ./
+    # List of key-value pairs to set as environment variables in the form KEY1=VALUE1,KEY2=VALUE2. Only one of env_vars or env_vars_file can be specified.
+    env_vars: # optional
+    # Path to a local YAML file with definitions for all environment variables. Only one of env_vars or env_vars_file can be specified.
+    env_vars_file: # optional
+    # List of key-value pairs to set as function labels in the form label1=VALUE1,label2=VALUE2.
+    labels: # optional
+    # Name of a function (as defined in source code) that will be executed. Defaults to the resource name suffix, if not specified.
+    entry_point: # optional
+    # Runtime to use for the function.
+    runtime: 
+    # The amount of memory in MB available for a function. Defaults to 256.
+    memory_mb: # optional
+    # The VPC Access connector that the function can connect to.
+    vpc_connector: # optional
+    # The egress settings for the connector, controlling what traffic is diverted through it.
+    vpc_connector_egress_settings: # optional
+    # The ingress settings for the function, controlling what traffic can reach it.
+    ingress_settings: # optional
+    # List of key-value pairs to set as environment variables at runtime of the
+format "KEY1=SECRET_VERSION_REF" where SECRET_VERSION_REF is a full
+resource name of a Google Secret Manager secret of the format
+"projects/p/secrets/s/versions/v". If the project is omitted, it will be
+inferred from the Cloud Function project ID. If the version is omitted, it
+will default to "latest".
+    secret_environment_variables: # optional
+    # List of key-value pairs to mount as volumes at runtime of the format
+"PATH=SECRET_VERSION_REF" where PATH is the mount path inside the
+container (e.g. "/etc/secrets/my-secret") and SECRET_VERSION_REF is a full
+resource name of a Google Secret Manager secret of the format
+"projects/p/secrets/s/versions/v". If the project is omitted, it will be
+inferred from the Cloud Function project ID. If the version is omitted, it
+will default to "latest".
+    secret_volumes: # optional
+    # The email address of the Google Cloud service account to use as the
+runtime service account for the function. If unspecified, the default
+Cloud Functions runtime service account is used.
+
+Note this differs from the service account used to deploy the Cloud
+Function, which is the currently-authenticated principal. However, the
+deploying service account must have permission to impersonate the runtime
+service account, which can be achieved by granting the deployment service
+account "roles/iam.serviceAccountUser" permission on the runtime service
+account.
+    service_account_email: # optional
+    # The function execution timeout.
+    timeout: # optional, default is 60s
+    # The minimum number of instances for the function.
+    min_instances: # optional
+    # The maximum number of instances for the function.
+    max_instances: # optional
+    # The security level for an HTTP(s) trigger. If set to "secure_always", the
+function will only be accessible over the https protocol. If set to
+"secure_optional", the function will be accessible over the http and https
+protocols. The default value is "security_level_unspecified", which uses
+the platform's default value.
+    https_trigger_security_level: # optional, default is security_level_unspecified
+    # Specifies which action should trigger the function.
+    event_trigger_type: # optional
+    # Specifies which resource from eventTrigger is observed.
+    event_trigger_resource: # optional
+    # The hostname of the service that should be observed.
+    event_trigger_service: # optional
+    # If true, the event will be retried if the function returns a failure.
+    event_trigger_retry: # optional
+    # The function deployment timeout in seconds.
+    deploy_timeout: # optional, default is 300
+    # Name of the Cloud Build Custom Worker Pool that should be used to build
+the function.
+    build_worker_pool: # optional
+    # Optional list of environment variables that should be available while the
+function is built. Note this is different than runtime environment
+variables, which should be set with 'env_vars'.
+    build_environment_variables: # optional
+    # Path to a local YAML file containing variables. See 'env_vars_file' for
+syntax.
+    build_environment_variables_file: # optional
+    # Registry to use for storing Docker containers. This must be one of
+"artifact-registry" or "container-registry".
+    docker_registry: # optional, default is container-registry
+    # User managed repository created in Artifact Registry.
+    docker_repository: # optional
+    # Resource name of a Google Cloud KMS crypto key used to encrypt/decrypt
+function resources. If specified, you must also provide an artifact
+registry repository using the 'docker_repository' field that was created
+with the same key.
+    kms_key_name: # optional
+
+
+
+name: ci
+
+on:
+  push:
+    branches:
+      - "main"
+
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ vars.DOCKER_USER }}
+          password: ${{ secrets.DOCKER_PAT }}
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver: cloud
+          endpoint: "bigsouth87/toknomics-builder"
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          tags: "${{ vars.DOCKER_USER }}/docker-build-cloud-demo:latest"
+          # For pull requests, export results to the build cache.
+          # Otherwise, push to a registry.
+          outputs: ${{ github.event_name == 'pull_request' && 'type=cacheonly' || 'type=registry' }}
