@@ -60,3 +60,42 @@ language sql stable security invoker set search_path = public as $$
     )
   from s
 $$;
+
+-- ── atomic credential writes ─────────────────────────────────────────────────
+-- A key lives in euler_credentials (ciphertext) and its verification in euler_connections (last four, account id, status).
+-- Written by two separate statements, a failure between them, or two saves interleaving, left one key's ciphertext beside
+-- another's metadata, or a "deleted" secret still stored. Each operation is now one function, so it commits or rolls back whole,
+-- and concurrent callers are serialised by the row locks they take.
+
+-- Stores a verified key, drops the moderation session (its tokens belong to the old key) and marks the connection valid.
+create or replace function public.save_euler_key(p_agency uuid, p_key_enc text, p_last4 text, p_account_id bigint)
+returns void language plpgsql set search_path = '' as $$
+begin
+  insert into public.euler_credentials (agency_id, api_key_enc, oauth_access_enc, oauth_refresh_enc, oauth_expires_at, updated_at)
+    values (p_agency, p_key_enc, null, null, null, now())
+  on conflict (agency_id) do update set
+    api_key_enc = excluded.api_key_enc, oauth_access_enc = null, oauth_refresh_enc = null, oauth_expires_at = null, updated_at = now();
+  update public.euler_connections set
+    api_key_last4 = p_last4, key_status = 'valid', euler_account_id = p_account_id,
+    status = 'disconnected', connected_at = null, account_label = null, updated_at = now()
+  where agency_id = p_agency;
+  if not found then raise exception 'no euler connection for agency %', p_agency using errcode = 'P0002'; end if;
+end $$;
+
+-- Wipes every stored secret and resets the public connection.
+create or replace function public.delete_euler_credentials(p_agency uuid)
+returns void language plpgsql set search_path = '' as $$
+begin
+  insert into public.euler_credentials (agency_id, updated_at) values (p_agency, now())
+  on conflict (agency_id) do update set
+    api_key_enc = null, cookie_enc = null, oauth_access_enc = null, oauth_refresh_enc = null, oauth_expires_at = null,
+    oauth_state_hash = null, oauth_state_expires_at = null, updated_at = now();
+  update public.euler_connections set
+    status = 'disconnected', key_status = 'unknown', api_key_last4 = null, has_cookie = false, account_label = null,
+    euler_account_id = null, connected_at = null, updated_at = now()
+  where agency_id = p_agency;
+end $$;
+
+-- Server-only: the API calls these as service_role after it has checked the caller is a Founder.
+revoke all on function public.save_euler_key(uuid, text, text, bigint), public.delete_euler_credentials(uuid) from public, anon, authenticated;
+grant execute on function public.save_euler_key(uuid, text, text, bigint), public.delete_euler_credentials(uuid) to service_role;

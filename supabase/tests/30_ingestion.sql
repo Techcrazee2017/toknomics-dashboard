@@ -67,3 +67,33 @@ select pg_temp.expect((select coins_in from target_stats('b0000000-0000-0000-000
 -- ── deleting an agency removes its status rows ──
 delete from stream_status where agency_id = 'b0000000-0000-0000-0000-000000000002';
 select pg_temp.expect((select count(*) from stream_status) = 1, 'status rows are scoped per agency');
+
+-- ── atomic credential functions ──
+insert into euler_connections (agency_id) values ('b0000000-0000-0000-0000-000000000002') on conflict do nothing;
+set role service_role;
+select public.save_euler_key('a0000000-0000-0000-0000-000000000001', 'v1.new', '9999', 77);
+reset role;
+select pg_temp.expect((select api_key_enc = 'v1.new' and oauth_access_enc is null from euler_credentials where agency_id = 'a0000000-0000-0000-0000-000000000001')
+  and (select key_status = 'valid' and api_key_last4 = '9999' and euler_account_id = 77 and status = 'disconnected'
+       from euler_connections where agency_id = 'a0000000-0000-0000-0000-000000000001'),
+  'save_euler_key writes the ciphertext and the verified metadata together');
+set role service_role;
+do $$ begin
+  perform public.save_euler_key('c0000000-0000-0000-0000-00000000dead', 'v1.x', '1111', 1);
+  raise exception 'FAIL save_euler_key accepted an agency with no connection';
+exception when foreign_key_violation or sqlstate 'P0002' then raise notice 'PASS save_euler_key rejects an unknown agency';
+end $$;
+reset role;
+select pg_temp.expect(not exists (select 1 from euler_credentials where agency_id = 'c0000000-0000-0000-0000-00000000dead'),
+  'a rejected save leaves no orphan ciphertext');
+set role service_role;
+select public.delete_euler_credentials('a0000000-0000-0000-0000-000000000001');
+reset role;
+select pg_temp.expect((select api_key_enc is null and cookie_enc is null and oauth_access_enc is null from euler_credentials where agency_id = 'a0000000-0000-0000-0000-000000000001')
+  and (select key_status = 'unknown' and api_key_last4 is null and euler_account_id is null and not has_cookie
+       from euler_connections where agency_id = 'a0000000-0000-0000-0000-000000000001'),
+  'delete_euler_credentials wipes the secrets and resets the connection together');
+select pg_temp.expect(not has_function_privilege('authenticated', 'public.save_euler_key(uuid, text, text, bigint)', 'execute')
+  and not has_function_privilege('anon', 'public.delete_euler_credentials(uuid)', 'execute')
+  and has_function_privilege('service_role', 'public.save_euler_key(uuid, text, text, bigint)', 'execute'),
+  'credential functions are service_role only');

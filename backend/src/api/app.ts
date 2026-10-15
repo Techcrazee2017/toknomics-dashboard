@@ -128,10 +128,11 @@ export function createApp(db: SupabaseClient, cfg: AppConfig, stripe: Stripe | n
     if (body.host !== undefined) patch.host = body.host;
     if (body.pinnedUserId !== undefined) patch.pinned_user_id = body.pinnedUserId || null;
     if (body.apiKey !== undefined) {
-      // Verified before it is stored: a key Euler rejects never replaces a working one.
+      // Verified before it is stored: a key Euler rejects never replaces a working one. The ciphertext and its verification
+      // (last four, account id, status) are then written by one database function, so they can't end up from different saves.
       const account = await verifyKey(make(body.apiKey));
-      secrets.api_key_enc = seal(body.apiKey, aid);
-      Object.assign(patch, { api_key_last4: body.apiKey.slice(-4), key_status: 'valid', euler_account_id: account.id });
+      const saved = await db.rpc('save_euler_key', { p_agency: aid, p_key_enc: seal(body.apiKey, aid), p_last4: body.apiKey.slice(-4), p_account_id: account.id });
+      if (saved.error) throw new HttpError(500, 'Could not save the API key');
     }
     if (body.cookie !== undefined) { secrets.cookie_enc = body.cookie ? seal(body.cookie, aid) : null; patch.has_cookie = !!body.cookie; }
     // Cookie mode makes TikTok see a signed-in session; make the Founder acknowledge the risk once, and record it.
@@ -140,8 +141,8 @@ export function createApp(db: SupabaseClient, cfg: AppConfig, stripe: Stripe | n
       if ((body.cookie || body.mode === 'cookie') && !body.cookieRisk) throw new HttpError(400, 'Confirm that you accept the risk of cookie mode', 'validation', { cookieRisk: 'Confirm that you accept the risk of cookie mode' });
       if (body.cookieRisk) patch.cookie_ack_at = now();
     }
-    // The moderation session's mode (and the key behind its tokens) is fixed when it starts, so changing either ends it.
-    if ((body.mode && body.mode !== conn.mode) || body.apiKey !== undefined) {
+    // The moderation session's mode is fixed when it starts, so changing it ends it. (Saving a key ends it too; save_euler_key does that.)
+    if (body.mode && body.mode !== conn.mode) {
       Object.assign(patch, { status: 'disconnected', connected_at: null, account_label: null });
       Object.assign(secrets, { oauth_access_enc: null, oauth_refresh_enc: null, oauth_expires_at: null });
     }
@@ -204,16 +205,10 @@ export function createApp(db: SupabaseClient, cfg: AppConfig, stripe: Stripe | n
   agency.post('/euler/credentials/delete', rateLimit('cred-delete', 5, 60_000), async c => {
     allow(c, 'manageCredentials', 'Only Founders can delete Euler credentials');
     const aid = c.get('agencyId');
-    const wipe = await db.from('euler_credentials').upsert({
-      agency_id: aid, api_key_enc: null, cookie_enc: null, oauth_access_enc: null, oauth_refresh_enc: null, oauth_expires_at: null,
-      oauth_state_hash: null, oauth_state_expires_at: null, updated_at: now(),
-    }, { onConflict: 'agency_id' });
-    if (wipe.error) throw new HttpError(500, 'Could not delete the credentials');
-    const reset = await db.from('euler_connections').update({
-      status: 'disconnected', key_status: 'unknown', api_key_last4: null, has_cookie: false, account_label: null,
-      euler_account_id: null, connected_at: null, updated_at: now(),
-    }).eq('agency_id', aid);
-    if (reset.error) throw new HttpError(500, 'Could not reset the connection');
+    // One database function wipes the secrets and resets the connection together, so a failure or a concurrent key save can't
+    // leave a "deleted" secret stored or a public status that disagrees with it.
+    const wiped = await db.rpc('delete_euler_credentials', { p_agency: aid });
+    if (wiped.error) throw new HttpError(500, 'Could not delete the credentials');
     return c.json({ ok: true });
   });
 

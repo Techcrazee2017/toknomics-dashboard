@@ -10,9 +10,11 @@ const AGENCY = '0f8b8c3e-7a3b-4c4e-9a59-3f4d2a1b0c11';
 type Op = { table: string; method: string; args: unknown[] };
 
 /** Chainable stand-in for supabase-js: records every call and answers from `respond`. */
-function fakeDb(roles: Record<string, string>, respond: (table: string, ops: Op[]) => unknown = () => ({ data: null, error: null })) {
+function fakeDb(roles: Record<string, string>, respond: (table: string, ops: Op[]) => unknown = () => ({ data: null, error: null }), rpcError: string | null = null) {
   const log: Op[] = [];
+  const rpcs: { name: string; args: Record<string, unknown> }[] = [];
   const db = {
+    rpc: async (name: string, args: Record<string, unknown>) => { rpcs.push({ name, args }); return { data: null, error: rpcError ? { message: rpcError } : null }; },
     auth: { getUser: async (t: string) => (roles[t] ? { data: { user: { id: t, email: `${t}@x.test` } }, error: null } : { data: { user: null }, error: { message: 'bad' } }) },
     from(table: string) {
       const ops: Op[] = [];
@@ -34,11 +36,11 @@ function fakeDb(roles: Record<string, string>, respond: (table: string, ops: Op[
     const uid = ops.find(o => o.method === 'eq' && o.args[0] === 'user_id')?.args[1] as string;
     return roles[uid] ? { role: roles[uid] } : null;
   }
-  return { db: db as unknown as SupabaseClient, log };
+  return { db: db as unknown as SupabaseClient, log, rpcs };
 }
 
-const app = (roles: Record<string, string>, respond?: (t: string, o: Op[]) => unknown, client?: unknown) => {
-  const f = fakeDb(roles, respond);
+const app = (roles: Record<string, string>, respond?: (t: string, o: Op[]) => unknown, client?: unknown, rpcError: string | null = null) => {
+  const f = fakeDb(roles, respond, rpcError);
   const makeClient = (client ? () => client : undefined) as ClientFactory | undefined;
   return { ...f, app: createApp(f.db, { webOrigin: 'http://web.test', apiPublicUrl: 'http://api.test' }, null, { makeClient }) };
 };
@@ -78,15 +80,23 @@ describe('API auth & roles', () => {
     expect(r.status).toBe(400);
     expect(((await r.json()) as { fields: Record<string, string> }).fields.cookie).toMatch(/sessionid/);
   });
-  it('stores keys sealed, never in plaintext', async () => {
-    const { app: a, log } = app({ f: 'founder' }, euler({ status: 'connected' }), goodClient);
+  it('stores keys sealed, never in plaintext, and writes the key and its metadata in one database call', async () => {
+    const { app: a, log, rpcs } = app({ f: 'founder' }, euler({ status: 'connected' }), goodClient);
     const r = await req(a, 'PUT', `/api/agencies/${AGENCY}/euler`, 'f', { apiKey: 'euler_live_123456' });
     expect(r.status).toBe(200);
-    const upsert = log.find(o => o.table === 'euler_credentials' && o.method === 'upsert')!.args[0] as Record<string, string>;
-    expect(upsert.api_key_enc).toMatch(/^v1\./);
-    expect(JSON.stringify(log)).not.toContain('euler_live_123456');
-    const update = log.find(o => o.table === 'euler_connections' && o.method === 'update')!.args[0] as Record<string, string>;
-    expect(update).toMatchObject({ api_key_last4: '3456', status: 'disconnected' });
+    expect(rpcs).toHaveLength(1);
+    expect(rpcs[0]).toMatchObject({ name: 'save_euler_key', args: { p_agency: AGENCY, p_last4: '3456', p_account_id: 42 } });
+    expect(String(rpcs[0]!.args.p_key_enc)).toMatch(/^v1\./);
+    expect(JSON.stringify([log, rpcs])).not.toContain('euler_live_123456');
+    // No separate statement writes the key or its metadata, so they can't come from different saves.
+    expect(log.some(o => o.table === 'euler_credentials' && o.method === 'upsert')).toBe(false);
+    const updates = log.filter(o => o.table === 'euler_connections' && o.method === 'update').map(o => o.args[0] as Record<string, unknown>);
+    expect(updates.every(u => !('api_key_last4' in u) && !('key_status' in u) && !('euler_account_id' in u))).toBe(true);
+  });
+  it('reports a failed key save instead of claiming success', async () => {
+    const { app: a } = app({ f: 'founder' }, euler({}), goodClient, 'boom');
+    const r = await req(a, 'PUT', `/api/agencies/${AGENCY}/euler`, 'f', { apiKey: 'euler_live_123456' });
+    expect(r.status).toBe(500);
   });
   it('rejects unknown tools and moderation by viewers', async () => {
     const { app: a } = app({ v: 'viewer' });
@@ -117,17 +127,17 @@ describe('API auth & roles', () => {
     expect(((await r.json()) as { code: string }).code).toBe('not_connected');
   });
   it('does not store a key Euler rejects', async () => {
-    const { app: a, log } = app({ f: 'founder' }, euler({ key_status: 'valid' }), badKeyClient);
+    const { app: a, log, rpcs } = app({ f: 'founder' }, euler({ key_status: 'valid' }), badKeyClient);
     const r = await req(a, 'PUT', `/api/agencies/${AGENCY}/euler`, 'f', { apiKey: 'euler_live_wrong' });
     expect(r.status).toBe(400);
     expect(((await r.json()) as { fields: Record<string, string> }).fields.apiKey).toMatch(/did not accept/);
     expect(log.some(o => o.table === 'euler_credentials' && o.method === 'upsert')).toBe(false);
+    expect(rpcs).toHaveLength(0);
   });
   it('marks the key verified and records the Euler account when it is saved', async () => {
-    const { app: a, log } = app({ f: 'founder' }, euler({}), goodClient);
+    const { app: a, rpcs } = app({ f: 'founder' }, euler({}), goodClient);
     await req(a, 'PUT', `/api/agencies/${AGENCY}/euler`, 'f', { apiKey: 'euler_live_123456' });
-    const upd = log.find(o => o.table === 'euler_connections' && o.method === 'update')!.args[0] as Record<string, unknown>;
-    expect(upd).toMatchObject({ key_status: 'valid', euler_account_id: 42, api_key_last4: '3456' });
+    expect(rpcs[0]!.args).toMatchObject({ p_account_id: 42, p_last4: '3456' });   // the function sets key_status = 'valid' with them
   });
   it('requires an explicit risk acknowledgement before cookie mode, and records it', async () => {
     const { app: a, log } = app({ f: 'founder' }, euler({}), goodClient);
@@ -157,14 +167,20 @@ describe('API auth & roles', () => {
     expect(eqs).toContainEqual(['api_key_last4', '3456']);
     expect(log.some(o => o.table === 'euler_connections' && o.method === 'update' && (o.args[0] as Record<string, unknown>).key_status === 'invalid')).toBe(true);
   });
-  it('lets only Founders delete Euler credentials, and wipes everything', async () => {
+  it('lets only Founders delete Euler credentials, in one database call', async () => {
     const mgr = app({ m: 'manager' }, euler({}), goodClient);
     expect((await req(mgr.app, 'POST', `/api/agencies/${AGENCY}/euler/credentials/delete`, 'm')).status).toBe(403);
-    const { app: a, log } = app({ f: 'founder' }, euler({ key_status: 'valid' }), goodClient);
+    expect(mgr.rpcs).toHaveLength(0);
+    const { app: a, log, rpcs } = app({ f: 'founder' }, euler({ key_status: 'valid' }), goodClient);
     expect((await req(a, 'POST', `/api/agencies/${AGENCY}/euler/credentials/delete`, 'f')).status).toBe(200);
-    const wiped = log.find(o => o.table === 'euler_credentials' && o.method === 'upsert')!.args[0] as Record<string, unknown>;
-    expect(wiped).toMatchObject({ api_key_enc: null, cookie_enc: null, oauth_access_enc: null, oauth_refresh_enc: null });
-    expect(log.find(o => o.table === 'euler_connections' && o.method === 'update')!.args[0]).toMatchObject({ status: 'disconnected', key_status: 'unknown', api_key_last4: null, has_cookie: false });
+    expect(rpcs).toEqual([{ name: 'delete_euler_credentials', args: { p_agency: AGENCY } }]);
+    // Secrets and the public connection are reset by that one function, never by two statements that could part.
+    expect(log.some(o => o.table === 'euler_credentials' && o.method === 'upsert')).toBe(false);
+    expect(log.some(o => o.table === 'euler_connections' && o.method === 'update')).toBe(false);
+  });
+  it('reports a failed credential delete instead of claiming success', async () => {
+    const { app: a } = app({ f: 'founder' }, euler({ key_status: 'valid' }), goodClient, 'boom');
+    expect((await req(a, 'POST', `/api/agencies/${AGENCY}/euler/credentials/delete`, 'f')).status).toBe(500);
   });
   it('only lets founders invite', async () => {
     const { app: a } = app({ m: 'manager' });
