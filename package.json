@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "workspaces": ["shared", "backend", "web"],
+  "engines": { "node": ">=24 <25" },
   "scripts": {
     "dev": "npm --prefix web run dev",
     "lint": "npm run typecheck",

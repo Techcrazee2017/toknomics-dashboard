@@ -1,0 +1,15 @@
+# npm workspaces share one lockfile at the repo root, so updates must target "/" or the lockfile drifts.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      dev-tooling:
+        dependency-type: development
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly

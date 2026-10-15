@@ -5,7 +5,7 @@
   "scripts": {
     "api": "tsx --env-file-if-exists=.env src/api/server.ts",
     "worker": "tsx --env-file-if-exists=.env src/worker.ts",
-    "start": "tsx --env-file-if-exists=.env src/start.ts",
+    "start": "node --env-file-if-exists=.env --import tsx src/start.ts",
     "verify": "tsx --env-file=.env scripts/verify-gift-pipeline.ts",
     "typecheck": "tsc -p .",
     "test": "vitest run",
@@ -20,13 +20,15 @@
     "hono": "^4.13.13",
     "stripe": "^23.0.0",
     "tiktok-live-api-sdk": "0.6.1",
+    "tsx": "^4.23.15",
     "ws": "^8.18.0",
     "zod": "^4.6.5"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
+    "@types/node": "^24.0.0",
     "@types/ws": "^8.5.12",
     "tsx": "^4.23.15",
     "vitest": "^5.0.4"
+    "vitest": "^5.0.5"
   }
 }
