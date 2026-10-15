@@ -23,9 +23,6 @@ export function SignIn() {
         {state === 'sent' ? <p className="card-body" style={{ margin: 0 }}>Check {email.trim()} for a sign-in link. You can close this tab.</p> : <>
           <Field label="Work email" error={err}><input className="input" type="email" autoComplete="email" autoFocus value={email} onChange={e => { setEmail(e.target.value); setErr(''); }} placeholder="you@agency.com" /></Field>
           <button className="btn btn-primary" disabled={state === 'sending'}>{state === 'sending' ? 'Sending…' : 'Email me a sign-in link'}</button>
-          <button type="button" className="btn btn-secondary" style={{ marginTop: 8 }} onClick={() => void supabase.auth.signInWithOtp({ email: 'kai@northlight.agency' })}>
-            Enter demo workspace (Northlight Agency)
-          </button>
         </>}
       </form>
     </div>
