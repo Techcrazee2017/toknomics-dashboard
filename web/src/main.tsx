@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { SpeedInsights } from '@vercel/speed-insights/react';
+import { Analytics } from '@vercel/analytics/react';
 import '@phosphor-icons/web/regular/style.css';
 import '@phosphor-icons/web/fill/style.css';
 import './styles/nocturne.css';
@@ -19,6 +20,7 @@ createRoot(document.getElementById('root')!).render(
       <BrowserRouter>
         <App />
         <SpeedInsights />
+        <Analytics />
       </BrowserRouter>
     </QueryClientProvider>
   </StrictMode>,
