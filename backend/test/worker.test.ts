@@ -68,6 +68,28 @@ describe('planSockets', () => {
     expect(run(p)).toEqual(['a:c1', 'a:c3'].sort());
   });
 
+  it('keeps a battle target and its opponent together when an agency hits its budget', () => {
+    // Budget 3: c1 (1 socket) and the battle c2+opp (2 sockets) fit; the next battle c3+opp3 needs 2 more and is dropped whole.
+    const targets = [t('a', 'c1'), t('a', 'c2', 'opp2'), t('a', 'c3', 'opp3')];
+    const p = planSockets(targets, keys, new Map([['a', 3]]), 100);
+    expect(run(p)).toEqual(['a:c1', 'a:c2', 'a:opp2']);
+    expect(p.capacity.map(c => c.uid).sort()).toEqual(['c3', 'opp3']);
+  });
+
+  it('keeps a battle together at the global cap, never splitting the pair', () => {
+    const p = planSockets([t('a', 'c1', 'o1'), t('a', 'c2', 'o2'), t('b', 'x')], keys, new Map(), 4);
+    // Round 1: a gets c1+o1 (2), b gets x (1) = 3. Round 2: a's c2+o2 needs 2 more, only 1 left: neither runs.
+    expect(run(p)).toEqual(['a:c1', 'a:o1', 'b:x']);
+    expect(p.capacity.map(c => c.uid).sort()).toEqual(['c2', 'o2']);
+    for (const [k] of p.run) expect(k.startsWith('a:') ? ['a:c1', 'a:o1'].includes(k) : true).toBe(true);
+  });
+
+  it('does not report a shared opponent as over capacity when another admitted battle already runs it', () => {
+    const p = planSockets([t('a', 'c1', 'shared'), t('a', 'c2', 'shared')], keys, new Map([['a', 2]]), 100);
+    expect(run(p)).toEqual(['a:c1', 'a:shared']);
+    expect(p.capacity).toEqual([{ agencyId: 'a', uid: 'c2' }]);
+  });
+
   it('derives the per-agency budget from the plan roster limit', () => {
     expect(socketBudget('starter')).toBe(20);
     expect(socketBudget('scale')).toBe(300);

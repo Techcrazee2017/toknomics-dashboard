@@ -11,7 +11,9 @@
 alter table public.euler_connections
   add column if not exists key_status text not null default 'unknown' check (key_status in ('unknown', 'valid', 'invalid')),
   add column if not exists cookie_ack_at timestamptz;
--- Agencies that already pasted a key are verified on the next save; none exist at launch.
+-- A connection only reached 'connected' after the key was verified against Euler, so keep those agencies ingesting
+-- instead of asking every Founder to paste the key again.
+update public.euler_connections set key_status = 'valid' where status = 'connected' and api_key_last4 is not null;
 
 -- ── stream_status: one row per (agency, creator) ────────────────────────────
 delete from public.stream_status;

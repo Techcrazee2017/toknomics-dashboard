@@ -209,10 +209,11 @@ export type SocketPlan = {
 export const slotKey = (agencyId: string, uid: string) => `${agencyId}:${uid}`;
 
 /**
- * Pure: which (agency, creator) sockets run. Each agency wants its tracked creators plus battle opponents,
- * opened with its own key. An agency is capped at its budget; if the total still exceeds `max`, slots are
- * handed out round-robin across agencies so a big agency can't starve a small one. Sockets already open win
- * ties inside an agency, which keeps a stable set instead of churning on every reconcile.
+ * Pure: which (agency, creator) sockets run. A tracked target and its battle opponent form one unit, and a unit is
+ * admitted whole or not at all: keeping only one side would show a live battle with the other side's gifts missing.
+ * An agency is capped at its budget; if the total still exceeds `max`, units are handed out round-robin across
+ * agencies so a big agency can't starve a small one. Units with a socket already open go first inside an agency,
+ * which keeps a stable set instead of churning on every reconcile.
  */
 export function planSockets(
   targets: readonly Target[],
@@ -221,36 +222,58 @@ export function planSockets(
   max: number,
   open: ReadonlySet<string> = new Set(),
 ): SocketPlan {
-  const wanted = new Map<string, Set<string>>();
+  const unitsOf = new Map<string, Map<string, string[]>>();
   for (const t of targets) {
-    const s = wanted.get(t.agency_id) ?? new Set<string>();
-    s.add(t.unique_id);
-    if (t.opponent_unique_id) s.add(t.opponent_unique_id);
-    wanted.set(t.agency_id, s);
+    const unit = [...new Set([t.unique_id, ...(t.opponent_unique_id ? [t.opponent_unique_id] : [])])];
+    const m = unitsOf.get(t.agency_id) ?? new Map<string, string[]>();
+    m.set(unit.join('|'), unit);
+    unitsOf.set(t.agency_id, m);
   }
   const plan: SocketPlan = { run: new Map(), paused: [], capacity: [] };
-  const queues: { agencyId: string; apiKey: string; uids: string[] }[] = [];
-  for (const agencyId of [...wanted.keys()].sort()) {
-    const uids = [...wanted.get(agencyId)!].sort();
+  const spill: { agencyId: string; uid: string }[] = [];
+  const queues: { agencyId: string; apiKey: string; groups: string[][] }[] = [];
+
+  for (const agencyId of [...unitsOf.keys()].sort()) {
+    const units = [...unitsOf.get(agencyId)!.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([, u]) => u);
     const apiKey = keys.get(agencyId);
-    if (!apiKey) { for (const uid of uids) plan.paused.push({ agencyId, uid }); continue; }
-    const ordered = [...uids.filter(u => open.has(slotKey(agencyId, u))), ...uids.filter(u => !open.has(slotKey(agencyId, u)))];
-    const budget = budgets.get(agencyId) ?? Infinity;
-    for (const uid of ordered.slice(budget)) plan.capacity.push({ agencyId, uid });
-    queues.push({ agencyId, apiKey, uids: ordered.slice(0, budget) });
-  }
-  let used = 0;
-  for (let round = 0; used < max; round++) {
-    let progressed = false;
-    for (const q of queues) {
-      const uid = q.uids[round];
-      if (uid === undefined || used >= max) continue;
-      plan.run.set(slotKey(q.agencyId, uid), { agencyId: q.agencyId, uid, apiKey: q.apiKey });
-      used++; progressed = true;
+    if (!apiKey) {
+      for (const uid of new Set(units.flat())) plan.paused.push({ agencyId, uid });
+      continue;
     }
-    if (!progressed) break;
+    const isOpen = (u: string[]) => u.some(uid => open.has(slotKey(agencyId, uid)));
+    const ordered = [...units.filter(isOpen), ...units.filter(u => !isOpen(u))];
+    const budget = budgets.get(agencyId) ?? Infinity;
+    const admitted = new Set<string>();
+    const groups: string[][] = [];
+    for (const unit of ordered) {
+      const fresh = unit.filter(uid => !admitted.has(uid));
+      if (admitted.size + fresh.length <= budget) { fresh.forEach(uid => admitted.add(uid)); if (fresh.length) groups.push(fresh); }
+      else for (const uid of fresh) spill.push({ agencyId, uid });
+    }
+    queues.push({ agencyId, apiKey, groups });
   }
-  for (const q of queues) for (const uid of q.uids) if (!plan.run.has(slotKey(q.agencyId, uid))) plan.capacity.push({ agencyId: q.agencyId, uid });
+
+  let used = 0;
+  for (let round = 0; ; round++) {
+    let more = false;
+    for (const q of queues) {
+      const group = q.groups[round];
+      if (!group) continue;
+      more = true;
+      if (used + group.length > max) { for (const uid of group) spill.push({ agencyId: q.agencyId, uid }); continue; }
+      for (const uid of group) plan.run.set(slotKey(q.agencyId, uid), { agencyId: q.agencyId, uid, apiKey: q.apiKey });
+      used += group.length;
+    }
+    if (!more) break;
+  }
+  // A creator can sit in an admitted unit and a rejected one (a shared opponent): it runs, so it is not over capacity.
+  const seen = new Set<string>();
+  for (const x of spill) {
+    const k = slotKey(x.agencyId, x.uid);
+    if (plan.run.has(k) || seen.has(k)) continue;
+    seen.add(k);
+    plan.capacity.push(x);
+  }
   return plan;
 }
 
