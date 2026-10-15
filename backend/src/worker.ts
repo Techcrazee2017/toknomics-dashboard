@@ -84,6 +84,8 @@ export class StreamConnection {
   private pingTimer?: NodeJS.Timeout;
   private heartbeatTimer?: NodeJS.Timeout;
   private connectedAt: string | null = null;
+  /** Start of the current LIVE session. Totals on the live-targets cards count from here, so it is rewritten with every heartbeat. */
+  private sessionStartedAt: string | null = null;
   private roomId: string | null = null;
   private storedRoomId: string | null = null;
   private viewers: number | null = null;
@@ -106,9 +108,10 @@ export class StreamConnection {
   async start() {
     this.stopped = false;
     try {
-      const { data } = await withTimeout(this.db.from('stream_status').select('room_id, events_ingested')
+      const { data } = await withTimeout(this.db.from('stream_status').select('room_id, events_ingested, session_started_at')
         .eq('agency_id', this.agencyId).eq('unique_id', this.uniqueId).maybeSingle(), 'load stream status');
       this.storedRoomId = data?.room_id ?? null;
+      this.sessionStartedAt = data?.session_started_at ?? null;
       this.events = Number(data?.events_ingested ?? 0);
     } catch (e) {
       log({ level: 'warn', msg: 'stream status lookup failed, connecting with defaults', agency: this.agencyId, uid: this.uniqueId, err: (e as Error).message });
@@ -117,6 +120,7 @@ export class StreamConnection {
     clearInterval(this.heartbeatTimer);
     this.heartbeatTimer = setInterval(() => void this.setStatus({
       room_id: this.roomId, viewer_count: this.viewers, events_ingested: this.events,
+      ...(this.sessionStartedAt ? { session_started_at: this.sessionStartedAt } : {}),
       connected_at: this.status === 'live' ? this.connectedAt : null, next_retry_at: this.status === 'live' ? null : undefined,
     }), HEARTBEAT_MS);
     this.heartbeatTimer.unref?.();
@@ -210,7 +214,7 @@ export class StreamConnection {
   private onRoom(rid: string) {
     this.roomId = rid;
     const patch: Record<string, unknown> = { room_id: rid };
-    if (rid !== this.storedRoomId) patch.session_started_at = new Date().toISOString();
+    if (rid !== this.storedRoomId) { this.sessionStartedAt = new Date().toISOString(); patch.session_started_at = this.sessionStartedAt; }
     this.storedRoomId = rid;
     void this.setStatus(patch);
   }

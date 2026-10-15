@@ -211,7 +211,7 @@ describe('StreamConnection heartbeat', () => {
     vi.useFakeTimers();
     try {
       const { StreamConnection } = await import('../src/worker');
-      const { db, upserts } = connDb({ stored: { room_id: '7400', events_ingested: 5 } });
+      const { db, upserts } = connDb({ stored: { room_id: '7400', events_ingested: 5, session_started_at: '2026-10-15T19:00:00.000Z' } });
       const c = new StreamConnection('agency-1', 'nova_shift', 'k', db, {} as never, () => new Map());
       noConnect(c);
       await c.start();
@@ -221,13 +221,36 @@ describe('StreamConnection heartbeat', () => {
       // Something else (an old process, a stale request) overwrote the row; the next heartbeat puts this socket's truth back.
       await vi.advanceTimersByTimeAsync(30_001);
       expect(upserts.length).toBe(before + 1);
-      expect(upserts.at(-1)!.row).toMatchObject({ agency_id: 'agency-1', unique_id: 'nova_shift', status: 'live', events_ingested: 5, connected_at: '2026-10-15T20:00:00.000Z' });
+      expect(upserts.at(-1)!.row).toMatchObject({ agency_id: 'agency-1', unique_id: 'nova_shift', status: 'live', events_ingested: 5, connected_at: '2026-10-15T20:00:00.000Z', session_started_at: '2026-10-15T19:00:00.000Z' });
       await vi.advanceTimersByTimeAsync(30_000);
       expect(upserts.length).toBe(before + 2);
       c.stop();
       const stopped = upserts.length;
       await vi.advanceTimersByTimeAsync(120_000);
       expect(upserts.length).toBe(stopped);                 // no heartbeat after stop (stop itself wrote once, counted above)
+    } finally { vi.useRealTimers(); }
+  });
+});
+
+describe('StreamConnection session boundary', () => {
+  it('restarts the live-session clock on a new room and rewrites it with every heartbeat, so a stale write cannot move it', async () => {
+    vi.useFakeTimers();
+    try {
+      const { StreamConnection } = await import('../src/worker');
+      const { db, upserts } = connDb({ stored: { room_id: '7400', events_ingested: 0, session_started_at: '2026-10-15T19:00:00.000Z' } });
+      const c = new StreamConnection('agency-1', 'nova_shift', 'k', db, {} as never, () => new Map());
+      noConnect(c);
+      await c.start();
+      const onRoom = (c as unknown as { onRoom: (rid: string) => void }).onRoom.bind(c);
+      onRoom('7400');                                              // same room as stored: the session start is kept
+      expect(upserts.at(-1)!.row.session_started_at).toBeUndefined();
+      vi.setSystemTime(new Date('2026-10-15T21:00:00.000Z'));
+      onRoom('7501');                                              // a new room is a new session
+      const started = upserts.at(-1)!.row.session_started_at as string;
+      expect(started).toBe('2026-10-15T21:00:00.000Z');
+      await vi.advanceTimersByTimeAsync(30_001);                   // a delayed write about the old room may have clobbered the row
+      expect(upserts.at(-1)!.row).toMatchObject({ room_id: '7501', session_started_at: started });
+      c.stop();
     } finally { vi.useRealTimers(); }
   });
 });
