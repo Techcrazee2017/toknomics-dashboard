@@ -45,7 +45,9 @@ export function DataSource() {
     const b: UpdateConnectionBody = {};
     if (c && form.host.trim() !== c.host && isAdmin) b.host = form.host.trim();
     if (form.apiKey.trim() && isAdmin) b.apiKey = form.apiKey.trim();
-    if (form.cookie.trim() && isAdmin) { b.cookie = form.cookie.trim(); if (risk) b.cookieRisk = true; }
+    if (form.cookie.trim() && isAdmin) b.cookie = form.cookie.trim();
+    // Also on its own, for a cookie stored before the acknowledgement existed: ticking the box must be savable without re-pasting the cookie.
+    if (risk && isAdmin && c && !c.cookie_ack_at && (b.cookie || c.has_cookie || c.mode === 'cookie')) b.cookieRisk = true;
     if (c && form.pinned.trim() !== (c.pinned_user_id ?? '')) b.pinnedUserId = form.pinned.trim();
     return b;
   };

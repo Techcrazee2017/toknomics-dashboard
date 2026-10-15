@@ -139,6 +139,14 @@ describe('API auth & roles', () => {
     expect((await req(a, 'PUT', url, 'f', { cookie: 'sessionid=abc', cookieRisk: true })).status).toBe(200);
     expect((log.find(o => o.table === 'euler_connections' && o.method === 'update')!.args[0] as Record<string, unknown>).cookie_ack_at).toBeTruthy();
   });
+  it('records the risk acknowledgement on its own for a cookie stored before it existed', async () => {
+    const { app: a, log } = app({ f: 'founder' }, euler({ mode: 'cookie', has_cookie: true }), goodClient);
+    const r = await req(a, 'PUT', `/api/agencies/${AGENCY}/euler`, 'f', { cookieRisk: true });
+    expect(r.status).toBe(200);
+    expect((log.find(o => o.table === 'euler_connections' && o.method === 'update')!.args[0] as Record<string, unknown>).cookie_ack_at).toBeTruthy();
+    const mgr = app({ m: 'manager' }, euler({ mode: 'cookie', has_cookie: true }), goodClient);
+    expect((await req(mgr.app, 'PUT', `/api/agencies/${AGENCY}/euler`, 'm', { cookieRisk: true })).status).toBe(403);
+  });
   it('lets only Founders delete Euler credentials, and wipes everything', async () => {
     const mgr = app({ m: 'manager' }, euler({}), goodClient);
     expect((await req(mgr.app, 'POST', `/api/agencies/${AGENCY}/euler/credentials/delete`, 'm')).status).toBe(403);

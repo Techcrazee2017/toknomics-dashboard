@@ -119,7 +119,7 @@ export function createApp(db: SupabaseClient, cfg: AppConfig, stripe: Stripe | n
   agency.put('/euler', rateLimit('euler-save', 20, 60_000), async c => {
     const body = parseBody(UpdateConnectionBody, await jsonBody(c));
     const aid = c.get('agencyId'), role = c.get('role');
-    const founderOnly = body.apiKey !== undefined || body.cookie !== undefined || body.host !== undefined || body.mode === 'cookie';
+    const founderOnly = body.apiKey !== undefined || body.cookie !== undefined || body.host !== undefined || body.mode === 'cookie' || body.cookieRisk !== undefined;
     if (founderOnly) allow(c, 'manageCredentials', 'Only Founders can change the host, API key or Cookie mode');
     else if (role !== 'founder' && role !== 'manager') throw new HttpError(403, 'Your role does not allow this');
     const conn = await euler.connection(aid);
@@ -135,9 +135,10 @@ export function createApp(db: SupabaseClient, cfg: AppConfig, stripe: Stripe | n
     }
     if (body.cookie !== undefined) { secrets.cookie_enc = body.cookie ? seal(body.cookie, aid) : null; patch.has_cookie = !!body.cookie; }
     // Cookie mode makes TikTok see a signed-in session; make the Founder acknowledge the risk once, and record it.
-    if ((body.cookie || body.mode === 'cookie') && !conn.cookie_ack_at) {
-      if (!body.cookieRisk) throw new HttpError(400, 'Confirm that you accept the risk of cookie mode', 'validation', { cookieRisk: 'Confirm that you accept the risk of cookie mode' });
-      patch.cookie_ack_at = now();
+    // The acknowledgement can arrive on its own: an agency that stored a cookie before this existed has none on record.
+    if (!conn.cookie_ack_at) {
+      if ((body.cookie || body.mode === 'cookie') && !body.cookieRisk) throw new HttpError(400, 'Confirm that you accept the risk of cookie mode', 'validation', { cookieRisk: 'Confirm that you accept the risk of cookie mode' });
+      if (body.cookieRisk) patch.cookie_ack_at = now();
     }
     // The moderation session's mode (and the key behind its tokens) is fixed when it starts, so changing either ends it.
     if ((body.mode && body.mode !== conn.mode) || body.apiKey !== undefined) {

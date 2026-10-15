@@ -89,9 +89,9 @@ export class StreamConnection {
   ) {}
 
   /**
-   * Restores the stored room and event count, then opens the socket. The lookup is best-effort: if it fails or hangs
-   * the socket still opens with defaults (worst case the live-session clock restarts), so a slow database never
-   * leaves a tracked creator without a socket. stop() during the lookup is honoured by connect().
+   * Claims the status row, restores the stored room and event count, then opens the socket. The lookup is best-effort:
+   * if it fails or hangs the socket still opens with defaults (worst case the live-session clock restarts), so a slow
+   * database never leaves a tracked creator without a socket. stop() during the lookup is honoured by connect().
    */
   async start() {
     this.stopped = false;
@@ -103,6 +103,9 @@ export class StreamConnection {
     } catch (e) {
       log({ level: 'warn', msg: 'stream status lookup failed, connecting with defaults', agency: this.agencyId, uid: this.uniqueId, err: (e as Error).message });
     }
+    // The newest process to start a socket owns the row. Every later write is fenced on worker_id, so during a rolling
+    // deploy the old process can no longer touch what the new one now reports.
+    await this.setStatus({ status: 'connecting', next_retry_at: null }, 'claim').catch(() => {});
     this.connect();
   }
 
@@ -111,8 +114,7 @@ export class StreamConnection {
     clearTimeout(this.retryTimer);
     clearInterval(this.pingTimer);
     this.ws?.close(1000, 'untracked');
-    // Guarded by worker_id: during a redeploy the old process stops after the new one has taken over, and must not overwrite its rows.
-    void this.setStatus({ status, next_retry_at: null, connected_at: null, viewer_count: null }, true);
+    void this.setStatus({ status, next_retry_at: null, connected_at: null, viewer_count: null });
   }
 
   /** Swaps the key (e.g. the agency pasted a new one) by reconnecting with it. */
@@ -197,14 +199,25 @@ export class StreamConnection {
     void this.setStatus(patch);
   }
 
-  private async setStatus(patch: Record<string, unknown>, onlyIfOwner = false) {
+  /**
+   * claim: take ownership (upsert). Otherwise the write only lands while this process still owns the row; if the row
+   * does not exist yet it is created without taking anything from another owner.
+   */
+  private async setStatus(patch: Record<string, unknown>, mode: 'claim' | 'owned' = 'owned') {
     this.lastStatusWrite = Date.now();
     if (typeof patch.status === 'string') this.status = patch.status;
     const now = new Date().toISOString();
-    const { error } = onlyIfOwner
-      ? await this.db.from('stream_status').update({ updated_at: now, status: this.status, ...patch })
-          .eq('agency_id', this.agencyId).eq('unique_id', this.uniqueId).eq('worker_id', WORKER_ID)
-      : await this.db.from('stream_status').upsert({ agency_id: this.agencyId, unique_id: this.uniqueId, worker_id: WORKER_ID, updated_at: now, status: this.status, ...patch }, { onConflict: 'agency_id,unique_id' });
+    const row = { updated_at: now, status: this.status, ...patch };
+    const key = { agency_id: this.agencyId, unique_id: this.uniqueId };
+    let error: { message: string } | null = null;
+    if (mode === 'claim') {
+      ({ error } = await this.db.from('stream_status').upsert({ ...key, worker_id: WORKER_ID, ...row }, { onConflict: 'agency_id,unique_id' }));
+    } else {
+      const upd = await this.db.from('stream_status').update(row).eq('agency_id', this.agencyId).eq('unique_id', this.uniqueId).eq('worker_id', WORKER_ID).select('unique_id');
+      error = upd.error;
+      // Nothing matched: either the row is missing (create it) or another process owns it (leave it alone).
+      if (!error && !upd.data?.length) ({ error } = await this.db.from('stream_status').upsert({ ...key, worker_id: WORKER_ID, ...row }, { onConflict: 'agency_id,unique_id', ignoreDuplicates: true }));
+    }
     if (error) log({ level: 'warn', msg: 'status write failed', agency: this.agencyId, uid: this.uniqueId, err: error.message });
   }
 }
@@ -220,12 +233,30 @@ export type SocketPlan = {
 };
 export const slotKey = (agencyId: string, uid: string) => `${agencyId}:${uid}`;
 
+/** Union-find over creators that appear together in a target/opponent pair. Each group is sorted; groups are sorted. */
+function connectedGroups(pairs: readonly [string, string | null][]): string[][] {
+  const parent = new Map<string, string>();
+  const find = (x: string): string => {
+    let r = x;
+    while (parent.get(r) !== r) r = parent.get(r)!;
+    for (let c = x; c !== r;) { const n = parent.get(c)!; parent.set(c, r); c = n; }
+    return r;
+  };
+  for (const [a, b] of pairs) {
+    for (const u of [a, b]) if (u && !parent.has(u)) parent.set(u, u);
+    if (b) parent.set(find(a), find(b));
+  }
+  const groups = new Map<string, string[]>();
+  for (const u of parent.keys()) { const r = find(u); (groups.get(r) ?? groups.set(r, []).get(r)!).push(u); }
+  return [...groups.values()].map(g => g.sort()).sort((x, y) => (x[0]! < y[0]! ? -1 : x[0]! > y[0]! ? 1 : 0));
+}
+
 /**
- * Pure: which (agency, creator) sockets run. A tracked target and its battle opponent form one unit, and a unit is
- * admitted whole or not at all: keeping only one side would show a live battle with the other side's gifts missing.
- * An agency is capped at its budget; if the total still exceeds `max`, units are handed out round-robin across
- * agencies so a big agency can't starve a small one. Units with a socket already open go first inside an agency,
- * which keeps a stable set instead of churning on every reconcile.
+ * Pure: which (agency, creator) sockets run. Battles that share a creator (A vs B, and B vs C) form one connected
+ * group, and a group is admitted whole or not at all: keeping part of it would show a live battle with the other
+ * side's gifts missing. An agency is capped at its budget; if the total still exceeds `max`, groups are handed
+ * out round-robin across agencies so a big agency can't starve a small one. Groups with a socket already open go
+ * first inside an agency, which keeps a stable set instead of churning on every reconcile.
  */
 export function planSockets(
   targets: readonly Target[],
@@ -234,35 +265,33 @@ export function planSockets(
   max: number,
   open: ReadonlySet<string> = new Set(),
 ): SocketPlan {
-  const unitsOf = new Map<string, Map<string, string[]>>();
+  const pairs = new Map<string, [string, string | null][]>();
   for (const t of targets) {
-    const unit = [...new Set([t.unique_id, ...(t.opponent_unique_id ? [t.opponent_unique_id] : [])])];
-    const m = unitsOf.get(t.agency_id) ?? new Map<string, string[]>();
-    m.set(unit.join('|'), unit);
-    unitsOf.set(t.agency_id, m);
+    const list = pairs.get(t.agency_id) ?? [];
+    list.push([t.unique_id, t.opponent_unique_id]);
+    pairs.set(t.agency_id, list);
   }
   const plan: SocketPlan = { run: new Map(), paused: [], capacity: [] };
   const spill: { agencyId: string; uid: string }[] = [];
   const queues: { agencyId: string; apiKey: string; groups: string[][] }[] = [];
 
-  for (const agencyId of [...unitsOf.keys()].sort()) {
-    const units = [...unitsOf.get(agencyId)!.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([, u]) => u);
+  for (const agencyId of [...pairs.keys()].sort()) {
+    const groups = connectedGroups(pairs.get(agencyId)!);
     const apiKey = keys.get(agencyId);
     if (!apiKey) {
-      for (const uid of new Set(units.flat())) plan.paused.push({ agencyId, uid });
+      for (const uid of groups.flat()) plan.paused.push({ agencyId, uid });
       continue;
     }
-    const isOpen = (u: string[]) => u.some(uid => open.has(slotKey(agencyId, uid)));
-    const ordered = [...units.filter(isOpen), ...units.filter(u => !isOpen(u))];
+    const isOpen = (g: string[]) => g.some(uid => open.has(slotKey(agencyId, uid)));
+    const ordered = [...groups.filter(isOpen), ...groups.filter(g => !isOpen(g))];
     const budget = budgets.get(agencyId) ?? Infinity;
-    const admitted = new Set<string>();
-    const groups: string[][] = [];
-    for (const unit of ordered) {
-      const fresh = unit.filter(uid => !admitted.has(uid));
-      if (admitted.size + fresh.length <= budget) { fresh.forEach(uid => admitted.add(uid)); if (fresh.length) groups.push(fresh); }
-      else for (const uid of fresh) spill.push({ agencyId, uid });
+    let admitted = 0;
+    const admittedGroups: string[][] = [];
+    for (const g of ordered) {
+      if (admitted + g.length <= budget) { admitted += g.length; admittedGroups.push(g); }
+      else for (const uid of g) spill.push({ agencyId, uid });
     }
-    queues.push({ agencyId, apiKey, groups });
+    queues.push({ agencyId, apiKey, groups: admittedGroups });
   }
 
   let used = 0;

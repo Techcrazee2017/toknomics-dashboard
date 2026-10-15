@@ -84,10 +84,22 @@ describe('planSockets', () => {
     for (const [k] of p.run) expect(k.startsWith('a:') ? ['a:c1', 'a:o1'].includes(k) : true).toBe(true);
   });
 
-  it('does not report a shared opponent as over capacity when another admitted battle already runs it', () => {
-    const p = planSockets([t('a', 'c1', 'shared'), t('a', 'c2', 'shared')], keys, new Map([['a', 2]]), 100);
-    expect(run(p)).toEqual(['a:c1', 'a:shared']);
-    expect(p.capacity).toEqual([{ agencyId: 'a', uid: 'c2' }]);
+  it('treats battles that share a creator as one group: A-B and B-C are admitted together or not at all', () => {
+    const targets = [t('a', 'A', 'B'), t('a', 'B', 'C')];
+    // Room for only two sockets: the old pairwise check kept A+B and dropped C while B still ran, so B-C looked live with C's gifts missing.
+    const tight = planSockets(targets, keys, new Map([['a', 2]]), 100);
+    expect(run(tight)).toEqual([]);
+    expect(tight.capacity.map(c => c.uid).sort()).toEqual(['A', 'B', 'C']);
+    expect(run(planSockets(targets, keys, new Map([['a', 3]]), 100))).toEqual(['a:A', 'a:B', 'a:C']);
+    // The same at the global cap.
+    expect(run(planSockets(targets, keys, new Map(), 2))).toEqual([]);
+  });
+
+  it('keeps a group that shares an opponent whole, and still lets unrelated battles run', () => {
+    const targets = [t('a', 'c1', 'shared'), t('a', 'c2', 'shared'), t('a', 'solo')];
+    const p = planSockets(targets, keys, new Map([['a', 2]]), 100);
+    expect(run(p)).toEqual(['a:solo']);
+    expect(p.capacity.map(c => c.uid).sort()).toEqual(['c1', 'c2', 'shared']);
   });
 
   it('derives the per-agency budget from the plan roster limit', () => {
@@ -106,16 +118,51 @@ describe('socketUrl', () => {
   });
 });
 
+/** A fake db that records stream_status writes, and answers `update ... select` with `updated` rows. */
+function statusDb(updated: unknown[]) {
+  const calls: { op: string; row?: Record<string, unknown>; opts?: Record<string, unknown>; eq: [string, unknown][] }[] = [];
+  const db = { from: () => ({
+    upsert: async (row: Record<string, unknown>, opts: Record<string, unknown>) => { calls.push({ op: 'upsert', row, opts, eq: [] }); return { error: null }; },
+    update: (row: Record<string, unknown>) => {
+      const c = { op: 'update', row, eq: [] as [string, unknown][] }; calls.push(c);
+      const q: any = { eq: (k: string, v: unknown) => { c.eq.push([k, v]); return q; }, select: async () => ({ data: updated, error: null }) };
+      return q;
+    },
+  }) };
+  return { db: db as never, calls };
+}
+const setStatusOf = (c: unknown) => (c as { setStatus: (p: Record<string, unknown>, m?: 'claim' | 'owned') => Promise<void> }).setStatus.bind(c);
+
 describe('StreamConnection status writes', () => {
-  it('always includes status so partial upserts pass stream_status NOT NULL', async () => {
+  it('always includes status so partial writes pass stream_status.status NOT NULL', async () => {
     const { StreamConnection } = await import('../src/worker');
-    const writes: Record<string, unknown>[] = [];
-    const db = { from: () => ({ upsert: async (row: Record<string, unknown>) => { writes.push(row); return { error: null }; } }) };
-    const c = new StreamConnection('agency-1', 'nova_shift', 'k', db as never, {} as never, () => new Map());
-    const set = (c as unknown as { setStatus: (p: Record<string, unknown>) => Promise<void> }).setStatus.bind(c);
+    const { db, calls } = statusDb([{ unique_id: 'nova_shift' }]);
+    const c = new StreamConnection('agency-1', 'nova_shift', 'k', db, {} as never, () => new Map());
+    const set = setStatusOf(c);
     await set({ status: 'live' });
     await set({ room_id: '7400', viewer_count: 12 });
-    expect(writes[1]).toMatchObject({ agency_id: 'agency-1', unique_id: 'nova_shift', status: 'live', room_id: '7400', viewer_count: 12 });
+    expect(calls[1]!.row).toMatchObject({ status: 'live', room_id: '7400', viewer_count: 12 });
+  });
+
+  it('claims the row with an upsert, then only writes while it still owns it', async () => {
+    const { StreamConnection } = await import('../src/worker');
+    const { db, calls } = statusDb([{ unique_id: 'nova_shift' }]);
+    const set = setStatusOf(new StreamConnection('agency-1', 'nova_shift', 'k', db, {} as never, () => new Map()));
+    await set({ status: 'connecting' }, 'claim');
+    expect(calls[0]).toMatchObject({ op: 'upsert', row: { agency_id: 'agency-1', unique_id: 'nova_shift' }, opts: { onConflict: 'agency_id,unique_id' } });
+    expect(typeof calls[0]!.row!.worker_id).toBe('string');
+    await set({ status: 'live' });
+    expect(calls[1]).toMatchObject({ op: 'update' });
+    expect(calls[1]!.eq.map(e => e[0]).sort()).toEqual(['agency_id', 'unique_id', 'worker_id']);
+    expect(calls[1]!.eq.find(e => e[0] === 'worker_id')![1]).toBe(calls[0]!.row!.worker_id);
+    expect(calls).toHaveLength(2); // the update matched: no fallback insert
+  });
+
+  it('never takes a row back from a newer process: the fallback insert ignores existing rows', async () => {
+    const { StreamConnection } = await import('../src/worker');
+    const { db, calls } = statusDb([]); // update matched nothing: another worker owns the row (or it is missing)
+    await setStatusOf(new StreamConnection('agency-1', 'nova_shift', 'k', db, {} as never, () => new Map()))({ status: 'live' });
+    expect(calls[1]).toMatchObject({ op: 'upsert', opts: { ignoreDuplicates: true } });
   });
 });
 
@@ -136,7 +183,9 @@ describe('StreamConnection.start', () => {
   it('does not connect if it was stopped while the lookup was pending', async () => {
     const { StreamConnection } = await import('../src/worker');
     let release!: (v: unknown) => void;
-    const slow = { from: () => ({ select: () => ({ eq: () => ({ eq: () => ({ maybeSingle: () => new Promise(r => { release = r; }) }) }) }), upsert: async () => ({ error: null }), update: () => ({ eq: () => ({ eq: () => ({ eq: async () => ({ error: null }) }) }) }) }) };
+    const writes = statusDb([{ unique_id: 'nova_shift' }]);
+    const base = (writes.db as unknown as { from: () => Record<string, unknown> }).from();
+    const slow = { from: () => ({ ...base, select: () => ({ eq: () => ({ eq: () => ({ maybeSingle: () => new Promise(r => { release = r; }) }) }) }) }) };
     const c = new StreamConnection('agency-1', 'nova_shift', 'k', slow as never, {} as never, () => new Map());
     const connect = vi.spyOn(c as unknown as { connect: () => void }, 'connect');
     const started = c.start();
