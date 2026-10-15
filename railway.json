@@ -7,7 +7,7 @@
   },
   "deploy": {
     "startCommand": "cd backend && exec node --import tsx src/start.ts",
-    "healthcheckPath": "/api/health",
+    "healthcheckPath": "/api/health/live",
     "healthcheckTimeout": 60,
     "restartPolicyType": "ALWAYS",
     "numReplicas": 1,

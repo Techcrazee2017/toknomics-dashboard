@@ -39,6 +39,7 @@ export const api = {
   connect: (aid: string) => call<ConnectResult>('POST', `${a(aid)}/euler/connect`, {}),
   cancelConnect: (aid: string) => call<unknown>('POST', `${a(aid)}/euler/cancel`, {}),
   disconnect: (aid: string) => call<unknown>('POST', `${a(aid)}/euler/disconnect`, {}),
+  deleteCredentials: (aid: string) => call<unknown>('POST', `${a(aid)}/euler/credentials/delete`, {}),
   test: (aid: string) => call<TestResult>('POST', `${a(aid)}/euler/test`, {}),
   syncGifts: (aid: string) => call<GiftSyncResult>('POST', `${a(aid)}/gifts/sync`, {}),
   wsToken: (aid: string, unique_id: string) => call<WsTokenResult>('POST', `${a(aid)}/ws-token`, { unique_id }),

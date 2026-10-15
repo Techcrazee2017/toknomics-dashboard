@@ -41,6 +41,8 @@ export function useRosterPL() {
     return {
       rows, totals, net: totals.comm - totals.invest, inProfit: rows.filter(x => x.net >= 0).length,
       creatorIds: isFiltered ? filtered.map(c => c.unique_id) : null,
+      // The same roster the KPI tiles cover. The Overview chart uses this: `creatorIds: null` would also sum battle opponents' diamonds as commission.
+      rosterIds: filtered.map(c => c.unique_id),
       loading: creators.isLoading || stats.isLoading, error: creators.error ?? stats.error,
       teamName, window: w,
     };

@@ -13,10 +13,12 @@ export const NAV = [
   ['/source', 'Data source', 'ph-plugs-connected'], ['/billing', 'Plan & billing', 'ph-credit-card'],
 ] as const;
 
-export function connectionLook(status: string | undefined) {
-  return status === 'connected' ? { label: 'Connected', dot: 'var(--color-accent-400)', pulse: 'slow' as const }
-    : status === 'authorizing' ? { label: 'Authorizing…', dot: 'var(--color-accent-200)', pulse: 'fast' as const }
-    : { label: 'Disconnected', dot: 'var(--color-neutral-600)', pulse: undefined };
+/** Live ingestion needs only an API key Euler accepted; the OAuth / cookie session (`status`) is for room moderation. */
+export function connectionLook(keyStatus: string | undefined) {
+  return keyStatus === 'loading' ? { label: 'Checking…', dot: 'var(--color-neutral-600)', pulse: undefined }
+    : keyStatus === 'valid' ? { label: 'Connected', dot: 'var(--color-accent-400)', pulse: 'slow' as const }
+    : keyStatus === 'invalid' ? { label: 'Key rejected', dot: 'var(--color-accent-200)', pulse: 'fast' as const }
+    : { label: 'Not connected', dot: 'var(--color-neutral-600)', pulse: undefined };
 }
 
 export function Shell(p: { children: ReactNode }) {
@@ -25,13 +27,14 @@ export function Shell(p: { children: ReactNode }) {
   const conn = useConnection(agency.id);
   const status = useStreamStatus(agency.id);
   const nav = useNavigate();
-  const look = connectionLook(conn.data?.status);
+  const keyState = conn.isLoading ? 'loading' : conn.data?.key_status;
+  const look = connectionLook(keyState);
   const mine = (targets.data ?? []).map(t => status.data?.get(t.unique_id)).filter(Boolean);
   const events = mine.reduce((a, s) => a + Number(s!.events_ingested ?? 0), 0);
   const last = mine.map(s => s!.last_event_at).filter(Boolean).sort().at(-1) ?? null;
-  const barRight = conn.data?.status === 'connected'
+  const barRight = keyState === 'loading' ? 'Checking Euler connection…' : conn.data?.key_status === 'valid'
     ? (last ? `Last event ${ago(last, now)} · ` : 'Waiting for events · ') + events.toLocaleString('en-US') + ' events ingested'
-    : conn.data?.status === 'authorizing' ? 'Waiting for authorization' : 'Live ingestion paused — ledger and targets are not updating';
+    : conn.data?.key_status === 'invalid' ? 'Euler rejected your API key — ledger and targets are not updating' : 'Live ingestion paused — add your Euler API key to start';
 
   return (
     <div className="tn-app">
@@ -59,7 +62,7 @@ export function Shell(p: { children: ReactNode }) {
       </aside>
       <main className="tn-main">
         <button className="tn-statusbar" onClick={() => nav('/source')}>
-          <span className="tn-row-8"><Dot color={look.dot} pulse={look.pulse} /><span className="tn-text">Euler Stream</span><span>{look.label}</span><span className="tag tag-neutral tn-tag-sm">{conn.data?.mode === 'cookie' ? 'Cookie' : 'OAuth'}</span></span>
+          <span className="tn-row-8"><Dot color={look.dot} pulse={look.pulse} /><span className="tn-text">Euler Stream</span><span>{look.label}</span><span className="tag tag-neutral tn-tag-sm">API key</span></span>
           <span className="tn-statusbar-right">{barRight}</span>
           <span className="tn-statusbar-link">Data source<i className="ph ph-caret-right" /></span>
         </button>

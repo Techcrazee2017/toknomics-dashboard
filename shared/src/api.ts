@@ -10,6 +10,8 @@ export const UpdateConnectionBody = z.object({
   host: z.string().trim().toLowerCase().regex(/^[a-z0-9.-]+\.[a-z]{2,}(:\d{2,5})?$/, 'Enter a host name, e.g. tiktok.eulerstream.com').optional(),
   apiKey: z.string().trim().min(8, 'That does not look like an Euler API key').max(512).optional(),
   cookie: z.string().trim().max(8192).refine(c => c === '' || /sessionid=/.test(c), 'Paste the raw Cookie header. It must include sessionid=').optional(),
+  /** Required the first time cookie mode is used: the Founder accepts that TikTok may restrict a cookie-authenticated account. */
+  cookieRisk: z.literal(true).optional(),
   pinnedUserId: z.union([z.literal(''), z.string().trim().regex(NUMERIC_ID, 'Pinned user ID must be numeric')]).optional(),
 });
 export type UpdateConnectionBody = z.infer<typeof UpdateConnectionBody>;

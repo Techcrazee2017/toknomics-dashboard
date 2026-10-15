@@ -8,7 +8,7 @@ import { keys, useAccounts, useCalls, useCatalog, useConnection, useGiftUsage, u
 import { ago, at, money } from '../lib/format';
 import { supabase } from '../lib/supabase';
 import { connectionLook, PageHeader } from '../components/Shell';
-import { Code, Dot, Field, Seg } from '../components/ui';
+import { Code, Dialog, Dot, Field, Seg } from '../components/ui';
 import { workerLine } from './LiveTargets';
 import { SNIP_JWT, SNIP_SDK, SNIP_WS, snipConnector, snipSdkTs } from './snippets';
 
@@ -24,7 +24,9 @@ export function DataSource() {
   const oauth = (c?.mode ?? 'oauth') === 'oauth';
   const [form, setForm] = useState<Form>({ host: '', apiKey: '', pinned: '', cookie: '' });
   const [errs, setErrs] = useState<Record<string, string>>({});
-  const [busy, setBusy] = useState<'' | 'save' | 'connect' | 'test' | 'mode'>('');
+  const [busy, setBusy] = useState<'' | 'save' | 'connect' | 'test' | 'mode' | 'delete'>('');
+  const [risk, setRisk] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   useEffect(() => { if (c) setForm(f => ({ ...f, host: c.host, pinned: c.pinned_user_id ?? '' })); }, [c?.host, c?.pinned_user_id]); // eslint-disable-line react-hooks/exhaustive-deps
   // Results of the OAuth round-trip come back as query params from the API's callback
@@ -45,6 +47,8 @@ export function DataSource() {
     if (c && form.host.trim() !== c.host && isAdmin) b.host = form.host.trim();
     if (form.apiKey.trim() && isAdmin) b.apiKey = form.apiKey.trim();
     if (form.cookie.trim() && isAdmin) b.cookie = form.cookie.trim();
+    // Also on its own, for a cookie stored before the acknowledgement existed: ticking the box must be savable without re-pasting the cookie.
+    if (risk && isAdmin && c && !c.cookie_ack_at && (b.cookie || c.has_cookie || c.mode === 'cookie')) b.cookieRisk = true;
     if (c && form.pinned.trim() !== (c.pinned_user_id ?? '')) b.pinnedUserId = form.pinned.trim();
     return b;
   };
@@ -59,11 +63,17 @@ export function DataSource() {
 
   const switchMode = (m: 'oauth' | 'cookie') => {
     if (!c || m === c.mode) return;
+    if (m === 'cookie' && !c.cookie_ack_at && !risk) { setErrs({ cookieRisk: 'Tick the box to accept the risk of cookie mode first' }); return; }
     void run('mode', async () => {
-      await api.updateConnection(agency.id, { mode: m });
+      await api.updateConnection(agency.id, { mode: m, ...(m === 'cookie' && risk ? { cookieRisk: true as const } : {}) });
       refresh();
-      toast(m === 'oauth' ? 'Switched to OAuth. Reconnect to resume.' : 'Switched to Cookie mode. Reconnect to resume.');
+      toast(m === 'oauth' ? 'Switched to OAuth. Reconnect to resume moderation.' : 'Switched to Cookie mode. Reconnect to resume moderation.');
     });
+  };
+  /** Saves host / key / pinned user. A new API key is checked with Euler before it is kept. */
+  const saveKey = (e?: FormEvent) => {
+    e?.preventDefault();
+    void run('save', async () => { if (await save()) toast(form.apiKey.trim() ? 'API key verified and saved. Live data is on.' : 'Saved'); });
   };
   const connect = (e?: FormEvent) => {
     e?.preventDefault();
@@ -72,7 +82,7 @@ export function DataSource() {
       const r = await api.connect(agency.id);
       refresh();
       if (r.status === 'authorizing') window.location.assign(r.authorizeUrl);
-      else toast('Connected to Euler Stream');
+      else toast('Room moderation connected');
     });
   };
 
@@ -81,8 +91,10 @@ export function DataSource() {
   const [cfg, setCfg] = useState<'remote' | 'direct'>('remote');
   const configJson = JSON.stringify({ mcpServers: { 'euler-stream': cfg === 'direct' ? { url } : { command: 'npx', args: ['mcp-remote', url] } } }, null, 2);
   const copy = (text: string, label: string) => navigator.clipboard.writeText(text).then(() => toast(label + ' copied'), () => toast('Copy failed. Select the text instead.'));
-  const look = connectionLook(c?.status);
-  const connected = c?.status === 'connected';
+  const look = connectionLook(conn.isLoading ? 'loading' : c?.key_status);
+  // Live ingestion needs only an accepted API key. `moderating` is the optional OAuth / cookie session for room actions.
+  const connected = c?.key_status === 'valid';
+  const moderating = c?.status === 'connected';
   const since = c?.connected_at ? Math.floor((now - Date.parse(c.connected_at)) / 60000) : 0;
   const hasKey = !!c?.api_key_last4;
 
@@ -96,13 +108,21 @@ export function DataSource() {
   const steps = [
     { title: 'Sign up', body: 'Create a free Euler Stream account with email or a social login.', link: 'https://www.eulerstream.com/register', linkLabel: 'eulerstream.com/register', done: hasKey },
     { title: 'Get your API key', body: 'In the Euler dashboard, create a key and paste it into API key below.', link: 'https://www.eulerstream.com/dashboard', linkLabel: 'Open Euler dashboard', done: hasKey },
-    { title: 'Connect TokNomics', body: isAdmin ? 'Authorize with OAuth to start live ingestion for the agency.' : 'Ask a Founder to finish setup. Only Founders can add credentials.', link: '', linkLabel: '', done: connected },
+    { title: 'Save your key here', body: isAdmin ? 'TokNomics checks the key with Euler and starts live ingestion right away.' : 'Ask a Founder to finish setup. Only Founders can add credentials.', link: '', linkLabel: '', done: connected },
   ];
 
   return (
     <>
       <PageHeader title="Data source" subtitle="One Euler Stream connection for the whole agency. It feeds the ledger, live targets and P&L." />
-      {c && (!connected || !hasKey) && (
+      {confirmDelete && (
+        <Dialog title="Delete Euler credentials?" onClose={() => setConfirmDelete(false)}
+          body="This permanently removes your stored Euler API key, cookie and tokens. Live data stops for this agency until you add a key again. Your ledger and history stay."
+          actions={<>
+            <button type="button" className="btn btn-secondary" onClick={() => setConfirmDelete(false)}>Keep credentials</button>
+            <button type="button" className="btn btn-secondary btn-destructive" disabled={busy !== ''} onClick={() => void run('delete', async () => { await api.deleteCredentials(agency.id); setForm(f => ({ ...f, apiKey: '', cookie: '' })); setConfirmDelete(false); refresh(); toast('Euler credentials deleted'); })}><i className="ph ph-trash" />Delete credentials</button>
+          </>}>{null}</Dialog>
+      )}
+      {c && !connected && (
         <section className="card elev-sm tn-card gap-6">
           <div className="tn-card-head"><div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}><span className="card-kicker">Get started</span><span className="card-title">Set up Euler Stream</span></div><span style={{ fontSize: 12, color: 'var(--color-neutral-500)' }}>{steps.filter(s => !s.done).length} of 3 steps left</span></div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 'var(--space-6)' }}>
@@ -122,70 +142,97 @@ export function DataSource() {
 
       <section className="tn-grid-2">
         <div className="tn-col">
-          <form className="card elev-sm tn-card gap-6" onSubmit={connect} noValidate>
+          <form className="card elev-sm tn-card gap-6" onSubmit={saveKey} noValidate>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}><span className="card-kicker">Connection</span><span className="card-title">Euler Stream for {agency.name}</span></div>
-            <div className="field">
-              <label>Authentication mode</label>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-3)' }} role="radiogroup" aria-label="Authentication mode">
-                {([['oauth', 'OAuth', 'Recommended', false], ['cookie', 'Cookie', 'Founders only', !isAdmin]] as const).map(([m, label, sub, locked]) => (
-                  <label key={m} className="seg-opt" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 2, padding: '10px 12px', border: '1px solid var(--color-divider)', borderRadius: 'var(--radius-md)', opacity: locked ? 0.45 : 1 }}>
-                    <input type="radio" name="tn-mode" checked={(c?.mode ?? 'oauth') === m} disabled={locked || busy !== '' || (!isAdmin && role !== 'manager')} onChange={() => switchMode(m)} />
-                    <span className="tn-row-8" style={{ gap: 6, fontSize: 14 }}>{label}{locked && <i className="ph ph-lock-simple" style={{ color: 'var(--color-neutral-500)' }} />}</span>
-                    <span style={{ fontSize: 11, color: 'var(--color-neutral-500)' }}>{sub}</span>
-                  </label>
-                ))}
-              </div>
-              <div style={{ fontSize: 12, color: 'var(--color-neutral-400)', marginTop: 8, lineHeight: 1.5 }}>
-                {oauth ? 'Tools use an x-oauth-token from the Euler OAuth flow. x-cookie-header is ignored. ' : 'Tools use raw TikTok cookies passed as x-cookie-header. No login flow. x-oauth-token is ignored. '}
-                Mode is set at connection time, so switching ends the current session.
-              </div>
-            </div>
+            {c?.key_status === 'invalid' && <div className="tn-alert" role="alert"><i className="ph ph-warning" />Euler rejected the saved API key. Live data is paused. Paste a new key to resume.</div>}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--space-4)' }}>
               <Field label="Server host" error={errs.host} hint="Shown in the MCP endpoint and client config.">
                 <input className="input" value={form.host} onChange={e => { setForm(f => ({ ...f, host: e.target.value })); setErrs({}); }} readOnly={!isAdmin} placeholder="<host>" />
               </Field>
-              <Field label={<span className="tn-row-8" style={{ gap: 6 }}>API key{!isAdmin && <i className="ph ph-lock-simple" />}</span>} error={errs.apiKey} hint={hasKey ? 'Stored encrypted. Paste a new key to replace it; this reconnects.' : undefined}>
+              <Field label={<span className="tn-row-8" style={{ gap: 6 }}>API key{!isAdmin && <i className="ph ph-lock-simple" />}</span>} error={errs.apiKey} hint={hasKey ? 'Stored encrypted and never sent to your browser. Paste a new key to replace it.' : 'Your own key from the Euler dashboard.'}>
                 <input className="input mono" style={{ fontSize: 13 }} type="password" autoComplete="off" value={form.apiKey} readOnly={!isAdmin}
                   placeholder={hasKey ? '•'.repeat(10) + c!.api_key_last4 : 'euler_…'} onChange={e => { setForm(f => ({ ...f, apiKey: e.target.value })); setErrs({}); }} />
               </Field>
             </div>
-            {oauth ? <>
-              <Field label="Pinned user ID (optional)" error={errs.pinnedUserId} hint="Selects a cached TikTok session and skips the account picker. If none is found, the normal flow continues.">
-                <input className="input mono" style={{ fontSize: 13 }} value={form.pinned} placeholder="e.g. 6779789250017592326" readOnly={!isAdmin && role !== 'manager'} onChange={e => { setForm(f => ({ ...f, pinned: e.target.value })); setErrs({}); }} />
-              </Field>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <div className="tn-chip"><span className="mono">x-oauth-token</span><span style={{ color: 'var(--color-neutral-300)' }}>{connected ? 'Issued by OAuth flow' : 'Issued when you authorize'}</span></div>
-                <div className="tn-chip" style={{ color: 'var(--color-neutral-500)' }}><span className="mono tn-row-8" style={{ gap: 6 }}><i className="ph ph-lock-simple" />x-cookie-header</span><span>Not accepted in OAuth mode</span></div>
-              </div>
-            </> : isAdmin ? <>
-              <Field label="x-cookie-header" error={errs.cookie} hint={c?.has_cookie ? 'A cookie header is stored encrypted. Paste a new one to replace it.' : undefined}>
-                <textarea className="input mono" style={{ fontSize: 12 }} value={form.cookie} autoComplete="off" placeholder="sessionid=…; tt-target-idc=…" onChange={e => { setForm(f => ({ ...f, cookie: e.target.value })); setErrs({}); }} />
-              </Field>
-              <div className="tn-chip" style={{ color: 'var(--color-neutral-500)' }}><span className="mono tn-row-8" style={{ gap: 6 }}><i className="ph ph-lock-simple" />x-oauth-token</span><span>Not accepted in Cookie mode</span></div>
-            </> : <div className="tn-chip" style={{ justifyContent: 'flex-start', color: 'var(--color-neutral-300)' }}><i className="ph ph-lock-simple" style={{ marginTop: 2 }} />Cookie credentials are only visible to Founders.</div>}
             {!isAdmin && <div style={{ fontSize: 12, color: 'var(--color-neutral-500)' }}>Only Founders can change the host, API key or Cookie mode.</div>}
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-3)' }}>
-              {isAdmin && c?.status === 'disconnected' && <button type="submit" className="btn btn-primary" disabled={busy !== ''}><i className={busy === 'connect' ? 'ph ph-spinner tn-spin' : 'ph ph-plugs-connected'} />{oauth ? 'Authorize with Euler OAuth' : 'Connect with cookies'}</button>}
-              {c?.status === 'authorizing' && <>
-                <button type="button" className="btn btn-primary" disabled><i className="ph ph-spinner tn-spin" />Authorizing…</button>
-                {isAdmin && <button type="button" className="btn btn-secondary" onClick={() => void run('connect', async () => { await api.cancelConnect(agency.id); refresh(); })}>Cancel</button>}
-              </>}
-              {dirty && (connected || !isAdmin) && <button type="button" className="btn btn-secondary" disabled={busy !== ''} onClick={() => void run('save', async () => { if (await save()) toast('Saved'); })}><i className="ph ph-floppy-disk" />Save changes</button>}
-              {connected && <>
-                <button type="button" className="btn btn-secondary" disabled={busy !== ''} onClick={() => void run('test', async () => { const r = await api.test(agency.id); toast(`Connection healthy · ${r.ms} ms · ${r.eventsPerMin} gifts/min${r.rateLimit ? ` · ${r.rateLimit.remaining}/${r.rateLimit.max} calls left this minute` : ''}`); })}><i className="ph ph-pulse" />Test connection</button>
-                {isAdmin && <button type="button" className="btn btn-secondary" disabled={busy !== ''} onClick={() => void run('connect', async () => { await api.disconnect(agency.id); refresh(); toast('Disconnected from Euler Stream'); })}><i className="ph ph-plugs" />Disconnect</button>}
-              </>}
+              {isAdmin && (!connected || form.apiKey.trim() !== '') && <button type="submit" className="btn btn-primary" disabled={busy !== '' || !form.apiKey.trim()}><i className={busy === 'save' ? 'ph ph-spinner tn-spin' : 'ph ph-key'} />{connected ? 'Verify and replace key' : 'Verify and save key'}</button>}
+              {dirty && connected && form.apiKey.trim() === '' && <button type="button" className="btn btn-secondary" disabled={busy !== ''} onClick={() => saveKey()}><i className="ph ph-floppy-disk" />Save changes</button>}
+              {connected && <button type="button" className="btn btn-secondary" disabled={busy !== ''} onClick={() => void run('test', async () => { const r = await api.test(agency.id); toast(`Connection healthy · ${r.ms} ms · ${r.eventsPerMin} gifts/min${r.rateLimit ? ` · ${r.rateLimit.remaining}/${r.rateLimit.max} calls left this minute` : ''}`); refresh(); })}><i className="ph ph-pulse" />Test connection</button>}
             </div>
           </form>
+
+          {connected && (
+            <form className="card elev-sm tn-card gap-6" onSubmit={connect} noValidate>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}><span className="card-kicker">Optional</span><span className="card-title">Room moderation</span></div>
+              <span style={{ fontSize: 13, color: 'var(--color-neutral-400)', lineHeight: 1.5 }}>Live data, the ledger and rankings already work with your API key. Connect a TikTok session only to mute, ban, add moderators and manage blocked words in rooms you track.</span>
+              <div className="field">
+                <label>Authentication mode</label>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-3)' }} role="radiogroup" aria-label="Authentication mode">
+                  {([['oauth', 'OAuth', 'Recommended', false], ['cookie', 'Cookie', 'Founders only', !isAdmin]] as const).map(([m, label, sub, locked]) => (
+                    <label key={m} className="seg-opt" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 2, padding: '10px 12px', border: '1px solid var(--color-divider)', borderRadius: 'var(--radius-md)', opacity: locked ? 0.45 : 1 }}>
+                      <input type="radio" name="tn-mode" checked={(c?.mode ?? 'oauth') === m} disabled={locked || busy !== '' || (!isAdmin && role !== 'manager')} onChange={() => switchMode(m)} />
+                      <span className="tn-row-8" style={{ gap: 6, fontSize: 14 }}>{label}{locked && <i className="ph ph-lock-simple" style={{ color: 'var(--color-neutral-500)' }} />}</span>
+                      <span style={{ fontSize: 11, color: 'var(--color-neutral-500)' }}>{sub}</span>
+                    </label>
+                  ))}
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--color-neutral-400)', marginTop: 8, lineHeight: 1.5 }}>
+                  {oauth ? 'Tools use an x-oauth-token from the Euler OAuth flow. x-cookie-header is ignored. ' : 'Tools use raw TikTok cookies passed as x-cookie-header. No login flow. x-oauth-token is ignored. '}
+                  Mode is set at connection time, so switching ends the current session.
+                </div>
+              </div>
+              {isAdmin && !c?.cookie_ack_at && (
+                <div>
+                  <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 13, color: 'var(--color-neutral-300)', lineHeight: 1.5 }}>
+                    <input type="checkbox" checked={risk} aria-invalid={!!errs.cookieRisk} aria-describedby={errs.cookieRisk ? 'cookie-risk-err' : undefined} onChange={e => { setRisk(e.target.checked); setErrs({}); }} style={{ marginTop: 3 }} />
+                    <span>I understand cookie mode signs in to TikTok as that account, and TikTok may restrict accounts used this way. I accept the risk.</span>
+                  </label>
+                  {errs.cookieRisk && <div id="cookie-risk-err" className="tn-err" role="alert">{errs.cookieRisk}</div>}
+                </div>
+              )}
+              {oauth ? <>
+                <Field label="Pinned user ID (optional)" error={errs.pinnedUserId} hint="Selects a cached TikTok session and skips the account picker. If none is found, the normal flow continues.">
+                  <input className="input mono" style={{ fontSize: 13 }} value={form.pinned} placeholder="e.g. 6779789250017592326" readOnly={!isAdmin && role !== 'manager'} onChange={e => { setForm(f => ({ ...f, pinned: e.target.value })); setErrs({}); }} />
+                </Field>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <div className="tn-chip"><span className="mono">x-oauth-token</span><span style={{ color: 'var(--color-neutral-300)' }}>{moderating ? 'Issued by OAuth flow' : 'Issued when you authorize'}</span></div>
+                  <div className="tn-chip" style={{ color: 'var(--color-neutral-500)' }}><span className="mono tn-row-8" style={{ gap: 6 }}><i className="ph ph-lock-simple" />x-cookie-header</span><span>Not accepted in OAuth mode</span></div>
+                </div>
+              </> : isAdmin ? <>
+                <Field label="x-cookie-header" error={errs.cookie} hint={c?.has_cookie ? 'A cookie header is stored encrypted. Paste a new one to replace it.' : undefined}>
+                  <textarea className="input mono" style={{ fontSize: 12 }} value={form.cookie} autoComplete="off" placeholder="sessionid=…; tt-target-idc=…" onChange={e => { setForm(f => ({ ...f, cookie: e.target.value })); setErrs({}); }} />
+                </Field>
+                <div className="tn-chip" style={{ color: 'var(--color-neutral-500)' }}><span className="mono tn-row-8" style={{ gap: 6 }}><i className="ph ph-lock-simple" />x-oauth-token</span><span>Not accepted in Cookie mode</span></div>
+              </> : <div className="tn-chip" style={{ justifyContent: 'flex-start', color: 'var(--color-neutral-300)' }}><i className="ph ph-lock-simple" style={{ marginTop: 2 }} />Cookie credentials are only visible to Founders.</div>}
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-3)' }}>
+                {isAdmin && c?.status === 'disconnected' && <button type="submit" className="btn btn-primary" disabled={busy !== ''}><i className={busy === 'connect' ? 'ph ph-spinner tn-spin' : 'ph ph-plugs-connected'} />{oauth ? 'Authorize with Euler OAuth' : 'Connect with cookies'}</button>}
+                {c?.status === 'authorizing' && <>
+                  <button type="button" className="btn btn-primary" disabled><i className="ph ph-spinner tn-spin" />Authorizing…</button>
+                  {isAdmin && <button type="button" className="btn btn-secondary" onClick={() => void run('connect', async () => { await api.cancelConnect(agency.id); refresh(); })}>Cancel</button>}
+                </>}
+                {dirty && !isAdmin && <button type="button" className="btn btn-secondary" disabled={busy !== ''} onClick={() => saveKey()}><i className="ph ph-floppy-disk" />Save changes</button>}
+                {moderating && isAdmin && <button type="button" className="btn btn-secondary" disabled={busy !== ''} onClick={() => void run('connect', async () => { await api.disconnect(agency.id); refresh(); toast('Room moderation disconnected. Live data keeps running.'); })}><i className="ph ph-plugs" />End moderation session</button>}
+              </div>
+            </form>
+          )}
+
+          {isAdmin && hasKey && (
+            <div className="card elev-sm tn-card gap-3">
+              <span className="card-title tn-title-sm">Remove credentials</span>
+              <span style={{ fontSize: 13, color: 'var(--color-neutral-400)', lineHeight: 1.5 }}>Deletes your stored Euler API key, cookie and tokens, and stops live data for this agency. Your ledger stays.</span>
+              <button type="button" className="btn btn-secondary btn-destructive" style={{ alignSelf: 'flex-start' }} disabled={busy !== ''} onClick={() => setConfirmDelete(true)}><i className="ph ph-trash" />Delete Euler credentials</button>
+            </div>
+          )}
           <LedgerSettings />
         </div>
 
         <div className="tn-col">
           <div className="card elev-sm tn-card">
-            <div className="tn-row-8" style={{ gap: 10 }}><Dot color={look.dot} pulse={look.pulse} size={10} /><span style={{ fontSize: 20, fontFamily: 'var(--font-heading)', fontWeight: 500 }}>{look.label}</span><span className="tag tag-neutral">{oauth ? 'OAuth' : 'Cookie'} mode</span></div>
+            <div className="tn-row-8" style={{ gap: 10 }}><Dot color={look.dot} pulse={look.pulse} size={10} /><span style={{ fontSize: 20, fontFamily: 'var(--font-heading)', fontWeight: 500 }}>{look.label}</span><span className="tag tag-neutral">API key</span></div>
             <div className="tnum" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 'var(--space-4) var(--space-6)' }}>
-              <div className="tn-kv"><span>Session</span><span>{c?.account_label ?? '—'}</span></div>
-              <div className="tn-kv"><span>Connected for</span><span>{connected && c?.connected_at ? (since >= 60 ? `${Math.floor(since / 60)}h ${since % 60}m` : `${since}m`) : '—'}</span></div>
+              <div className="tn-kv"><span>Room moderation</span><span>{moderating ? c?.account_label ?? 'Connected' : 'Not connected'}</span></div>
+              <div className="tn-kv"><span>Moderation for</span><span>{moderating && c?.connected_at ? (since >= 60 ? `${Math.floor(since / 60)}h ${since % 60}m` : `${since}m`) : '—'}</span></div>
               <div className="tn-kv"><span>Events ingested</span><span>{events.toLocaleString('en-US')}</span></div>
               <div className="tn-kv"><span>Last event</span><span>{connected && last ? ago(last, now) : '—'}</span></div>
             </div>
@@ -203,7 +250,7 @@ export function DataSource() {
             <div className="tn-card-head"><span className="card-title tn-title-sm">Tools in use</span><span style={{ fontSize: 12, color: 'var(--color-neutral-500)' }}>{TOOL_GROUPS.reduce((a, g) => a + g.tools.length, 0)} Euler tools</span></div>
             {TOOL_GROUPS.map(g => (
               <div key={g.name} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--color-neutral-300)' }}>{g.name}<span style={{ color: 'var(--color-neutral-500)' }}>used in {g.where}</span>{g.auth && <span className="tag tag-neutral tn-tag-sm">Needs {oauth ? 'x-oauth-token' : 'x-cookie-header'}</span>}</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--color-neutral-300)' }}>{g.name}<span style={{ color: 'var(--color-neutral-500)' }}>used in {g.where}</span>{g.auth && <span className="tag tag-neutral tn-tag-sm">Needs a moderation session ({oauth ? 'x-oauth-token' : 'x-cookie-header'})</span>}</div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>{g.tools.map(t => <Code key={t}>{t}</Code>)}</div>
               </div>
             ))}

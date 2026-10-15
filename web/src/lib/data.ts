@@ -11,7 +11,7 @@ export type Team = { id: string; name: string };
 export type Creator = { id: string; unique_id: string; display_name: string | null; team_id: string | null; tier: Tier };
 export type Target = { id: string; unique_id: string; kind: 'stream' | 'battle'; opponent_unique_id: string | null; anchor_id: string | null; label: string | null; source: string; created_at: string };
 export type StreamStatus = { unique_id: string; status: string; room_id: string | null; close_code: number | null; last_error: string | null; last_event_at: string | null; next_retry_at: string | null; viewer_count: number | null; connected_at: string | null; session_started_at: string | null; events_ingested: number };
-export type Connection = { agency_id: string; mode: 'oauth' | 'cookie'; host: string; status: 'disconnected' | 'authorizing' | 'connected'; api_key_last4: string | null; has_cookie: boolean; pinned_user_id: string | null; account_label: string | null; connected_at: string | null; euler_account_id: number | null };
+export type Connection = { agency_id: string; mode: 'oauth' | 'cookie'; host: string; status: 'disconnected' | 'authorizing' | 'connected'; api_key_last4: string | null; has_cookie: boolean; pinned_user_id: string | null; account_label: string | null; connected_at: string | null; euler_account_id: number | null; key_status: 'unknown' | 'valid' | 'invalid'; cookie_ack_at: string | null };
 export type CreatorStat = { creator_unique_id: string; invested_coins: number; received_diamonds: number; agency_gifts: number };
 export type LedgerRow = { id: number; occurred_at: string; sender_unique_id: string; creator_unique_id: string; gift_id: number; gift_name: string | null; repeat_count: number; coins: number; purpose: Purpose | null; total_count: number; total_coins: number };
 export type Member = { user_id: string; role: Role; team_id: string | null; status: 'invited' | 'active'; email: string; full_name: string | null; last_seen_at: string | null };
@@ -58,7 +58,7 @@ export const useTargets = (a: string) => useQuery({
 export const useStreamStatus = (a: string) => useQuery({
   queryKey: k.status(a),
   queryFn: async () => {
-    const list = await rows<StreamStatus[]>(supabase.from('stream_status').select('*'));
+    const list = await rows<StreamStatus[]>(supabase.from('stream_status').select('*').eq('agency_id', a));
     return new Map(list.map(s => [s.unique_id, s]));
   },
 });
@@ -143,7 +143,7 @@ export function useAgencyRealtime(a: string) {
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'gift_transactions', filter: `agency_id=eq.${a}` }, () => bump('stats', 'ledger'))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'gift_purposes', filter: `agency_id=eq.${a}` }, () => bump('ledger', 'stats'))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'tracked_targets', filter: `agency_id=eq.${a}` }, () => bump('targets', 'status', 'stats'))
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'stream_status' }, () => bump('status', 'stats'))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'stream_status', filter: `agency_id=eq.${a}` }, () => bump('status', 'stats'))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'creators', filter: `agency_id=eq.${a}` }, () => bump('creators'))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'euler_connections', filter: `agency_id=eq.${a}` }, () => void qc.invalidateQueries({ queryKey: k.connection(a) }))
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'euler_calls', filter: `agency_id=eq.${a}` }, () => void qc.invalidateQueries({ queryKey: k.calls(a) }))

@@ -11,7 +11,7 @@ export function Overview() {
   const { agency, rates, prefs, now } = useAgency();
   const pl = useRosterPL();
   const w = pl.window;
-  const series = useBurnSeries(agency.id, w.from, w.to, w.buckets, pl.creatorIds);
+  const series = useBurnSeries(agency.id, w.from, w.to, w.buckets, pl.rosterIds);
   const feed = useLedger(agency.id, { from: new Date(Date.parse(w.to) - 30 * 86_400_000).toISOString(), to: w.to, creators: pl.creatorIds, purpose: null, query: '', limit: 7 });
   const openCreator = useCreatorDrawer();
   const F = (v: number) => money(v, prefs.unit, rates);
