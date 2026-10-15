@@ -161,5 +161,8 @@ insert into creators (agency_id, unique_id) select '5ca1e000-0000-0000-0000-0000
 do $$ begin
   insert into public.creators (agency_id, unique_id) values ('5ca1e000-0000-0000-0000-000000000150', 'scale_151');
   raise exception 'FAIL scale plan allowed a 151st creator';
-exception when raise_exception then raise notice 'PASS scale plan caps the roster at 150';
+exception when raise_exception then
+  -- The FAIL above shares SQLSTATE P0001 with the limit trigger, so match the trigger's own message.
+  if sqlerrm <> 'Your plan allows 150 creators. Upgrade to add more.' then raise; end if;
+  raise notice 'PASS scale plan caps the roster at 150';
 end $$;
