@@ -246,6 +246,20 @@ describe('StreamConnection.start', () => {
   });
 });
 
+describe('StreamConnection.claim', () => {
+  it('stays unclaimed when the claim fails, so the supervisor can retry it, and is claimed once it succeeds', async () => {
+    const { StreamConnection } = await import('../src/worker');
+    let fail = true;
+    const db = { from: () => ({ upsert: () => ({ abortSignal: () => ({ then: (res: (v: unknown) => unknown) => Promise.resolve(fail ? { error: { message: 'down' } } : { error: null }).then(res) }) }) }) };
+    const c = new StreamConnection('agency-1', 'nova_shift', 'k', db as never, {} as never, () => new Map());
+    await c.claim();
+    expect(c.claimed).toBe(false);
+    fail = false;
+    await c.claim();
+    expect(c.claimed).toBe(true);
+  });
+});
+
 describe('Supervisor', () => {
   const ids = (n: number) => Array.from({ length: n }, (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`);
 
@@ -282,12 +296,21 @@ describe('Supervisor', () => {
      * Records the writes markIdle makes. `inserted` are the rows the insert-ignore created; `updated` returns the uids the fenced
      * update matched (default: all of them). `failUpdate` makes the update fail.
      */
-    function idleDb(opts: { failUpdate?: boolean; inserted?: (rows: { agency_id: string; unique_id: string }[]) => unknown[]; updated?: (ids: string[], agencyId: string) => string[] } = {}) {
+    /** A thenable like supabase-js's builders: awaitable, with `.abortSignal()`. `hang` never settles. */
+    const settled = <T,>(result: T, signals: AbortSignal[], hang = false) => {
+      const o: any = {
+        abortSignal: (s: AbortSignal) => { signals.push(s); return o; },
+        then: (res: (v: T) => unknown, rej?: (e: unknown) => unknown) => (hang ? new Promise(() => {}) : Promise.resolve(result).then(res, rej)),
+      };
+      return o;
+    };
+    function idleDb(opts: { failUpdate?: boolean; hang?: boolean; inserted?: (rows: { agency_id: string; unique_id: string }[]) => unknown[]; updated?: (ids: string[], agencyId: string) => string[] } = {}) {
       const calls: { op: string; rows?: unknown; patch?: Record<string, unknown>; opts?: Record<string, unknown>; filters: [string, unknown][] }[] = [];
+      const signals: AbortSignal[] = [];
       const db = { from: () => ({
         upsert: (rows: { agency_id: string; unique_id: string }[], o: Record<string, unknown>) => {
           calls.push({ op: 'upsert', rows, opts: o, filters: [] });
-          return { select: async () => ({ data: opts.inserted ? opts.inserted(rows) : rows, error: null }) };
+          return { select: () => settled({ data: opts.inserted ? opts.inserted(rows) : rows, error: null }, signals, opts.hang) };
         },
         update: (patch: Record<string, unknown>) => {
           const c = { op: 'update', patch, filters: [] as [string, unknown][] }; calls.push(c);
@@ -295,17 +318,17 @@ describe('Supervisor', () => {
             eq: (k: string, v: unknown) => { c.filters.push([k, v]); return q; },
             in: (k: string, v: unknown) => { c.filters.push([k, v]); return q; },
             or: (f: string) => { c.filters.push(['or', f]); return q; },
-            select: async () => {
-              if (opts.failUpdate) return { data: null, error: { message: 'down' } };
+            select: () => {
+              if (opts.failUpdate) return settled({ data: null, error: { message: 'down' } }, signals);
               const agencyId = String(c.filters.find(f => f[0] === 'agency_id')![1]), ids = c.filters.find(f => f[0] === 'unique_id')![1] as string[];
               const hit = opts.updated ? opts.updated(ids, agencyId) : ids;
-              return { data: hit.map(unique_id => ({ agency_id: agencyId, unique_id })), error: null };
+              return settled({ data: hit.map(unique_id => ({ agency_id: agencyId, unique_id })), error: null }, signals);
             },
           };
           return q;
         },
       }) };
-      return { db: db as never, calls };
+      return { db: db as never, calls, signals };
     }
 
     it('creates missing rows without overwriting, then updates only rows this process owns or whose owner went quiet', async () => {
@@ -338,6 +361,21 @@ describe('Supervisor', () => {
       ownerQuiet = true;
       await sup.markIdle([{ agencyId: 'a', uid: 'x' }], 'capacity');
       expect(sup.idle.get('a:x')).toBe('capacity');        // written once the lease allows it
+    });
+
+    it('aborts an idle write that times out, so it cannot land after a later reconcile', async () => {
+      vi.useFakeTimers();
+      try {
+        const { Supervisor } = await import('../src/worker');
+        const { db, signals } = idleDb({ hang: true });
+        const sup = new Supervisor(db, {} as never) as unknown as { markIdle: (s: { agencyId: string; uid: string }[], st: 'paused') => Promise<void>; idle: Map<string, string> };
+        const done = sup.markIdle([{ agencyId: 'a', uid: 'x' }], 'paused').catch(e => e as Error);
+        await vi.advanceTimersByTimeAsync(20_001);
+        expect(((await done) as Error).message).toMatch(/timed out/);
+        expect(signals.length).toBeGreaterThan(0);
+        expect(signals.every(s => s.aborted)).toBe(true);   // the request itself was cancelled, not just awaited less
+        expect(sup.idle.size).toBe(0);
+      } finally { vi.useRealTimers(); }
     });
 
     it('does not record a slot as written when the update fails, so it is retried', async () => {

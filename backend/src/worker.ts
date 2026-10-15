@@ -68,6 +68,15 @@ const chunks = <T>(xs: readonly T[], n = IN_CHUNK): T[][] => Array.from({ length
 const withTimeout = <T>(p: PromiseLike<T>, what: string, ms = DB_TIMEOUT_MS): Promise<T> =>
   Promise.race([Promise.resolve(p), new Promise<never>((_, rej) => setTimeout(() => rej(new Error(`${what} timed out after ${ms}ms`)), ms).unref())]);
 
+/**
+ * Like withTimeout, for writes: when the timeout fires the request is aborted too. Stopping the wait alone leaves the mutation
+ * running, and a late write could then overwrite what a later reconcile wrote.
+ */
+const abortable = <T>(run: (signal: AbortSignal) => PromiseLike<T>, what: string, ms = DB_TIMEOUT_MS): Promise<T> => {
+  const ctl = new AbortController();
+  return withTimeout(run(ctl.signal), what, ms).catch(e => { ctl.abort(); throw e; });
+};
+
 export type StreamHooks = {
   /** Euler closed with 4401: the agency's key is no longer accepted. */
   onInvalidKey?: (agencyId: string, rejectedKey: string) => void;
@@ -112,11 +121,24 @@ export class StreamConnection {
     // The newest process to start a socket owns the row. Every later write is fenced on worker_id, so during a rolling
     // deploy the old process can no longer touch what the new one now reports.
     // Bounded like the lookup above: a hung write must not keep the socket from opening or stall the supervisor.
-    // On timeout the request is aborted too, so a delayed claim can't land later and retake the row from a newer process.
-    const abort = new AbortController();
-    try { await withTimeout(this.setStatus({ status: 'connecting', next_retry_at: null }, 'claim', abort.signal), 'claim stream status'); }
-    catch (e) { abort.abort(); log({ level: 'warn', msg: 'status claim failed, connecting anyway', agency: this.agencyId, uid: this.uniqueId, err: (e as Error).message }); }
+    await this.claim();
     this.connect();
+  }
+
+  /** Whether this process has taken ownership of the status row. If the first attempt fails, the supervisor retries it. */
+  claimed = false;
+
+  /**
+   * Takes the status row. On a timeout the request is aborted, so a delayed claim can't land later and retake the row from a newer
+   * process. A failure is not fatal: the socket still runs, and the supervisor calls this again on each reconcile until it succeeds.
+   */
+  async claim() {
+    try {
+      this.claimed = await abortable(signal => this.setStatus({ status: this.status, next_retry_at: null }, 'claim', signal), 'claim stream status');
+      if (!this.claimed) log({ level: 'warn', msg: 'status claim rejected, will retry', agency: this.agencyId, uid: this.uniqueId });
+    } catch (e) {
+      log({ level: 'warn', msg: 'status claim failed, will retry', agency: this.agencyId, uid: this.uniqueId, err: (e as Error).message });
+    }
   }
 
   stop(status: 'stopped' | 'paused' | 'capacity' = 'stopped') {
@@ -213,7 +235,7 @@ export class StreamConnection {
    * claim: take ownership (upsert). Otherwise the write only lands while this process still owns the row; if the row
    * does not exist yet it is created without taking anything from another owner.
    */
-  private async setStatus(patch: Record<string, unknown>, mode: 'claim' | 'owned' = 'owned', signal?: AbortSignal) {
+  private async setStatus(patch: Record<string, unknown>, mode: 'claim' | 'owned' = 'owned', signal?: AbortSignal): Promise<boolean> {
     this.lastStatusWrite = Date.now();
     if (typeof patch.status === 'string') this.status = patch.status;
     const now = new Date().toISOString();
@@ -230,6 +252,7 @@ export class StreamConnection {
       if (!error && !upd.data?.length) ({ error } = await this.db.from('stream_status').upsert({ ...key, worker_id: WORKER_ID, ...row }, { onConflict: 'agency_id,unique_id', ignoreDuplicates: true }));
     }
     if (error) log({ level: 'warn', msg: 'status write failed', agency: this.agencyId, uid: this.uniqueId, err: error.message });
+    return !error;
   }
 }
 
@@ -432,7 +455,7 @@ export class Supervisor {
       for (const [k, slot] of plan.run) {
         this.idle.delete(k);
         const existing = this.conns.get(k);
-        if (existing) { existing.rekey(slot.apiKey); continue; }
+        if (existing) { existing.rekey(slot.apiKey); if (!existing.claimed) void existing.claim(); continue; }
         const c = new StreamConnection(slot.agencyId, slot.uid, slot.apiKey, this.db, this.gifts, () => this.catalog, { onInvalidKey: (a, key) => void this.markKeyInvalid(a, key) });
         this.conns.set(k, c);
         try { await c.start(); }
@@ -477,16 +500,16 @@ export class Supervisor {
     // owner went quiet) from the update. A slot another live process still owns matches neither, so it is not recorded and is retried
     // on the next reconcile, after the lease has had a chance to expire.
     const written = new Set<string>();
-    const created = await withTimeout(this.db.from('stream_status').upsert(
-      todo.map(s => ({ agency_id: s.agencyId, unique_id: s.uid, ...base })), { onConflict: 'agency_id,unique_id', ignoreDuplicates: true }).select('agency_id, unique_id'), 'create idle status');
+    const created = await abortable(signal => this.db.from('stream_status').upsert(
+      todo.map(s => ({ agency_id: s.agencyId, unique_id: s.uid, ...base })), { onConflict: 'agency_id,unique_id', ignoreDuplicates: true }).select('agency_id, unique_id').abortSignal(signal), 'create idle status');
     if (created.error) { log({ level: 'warn', msg: 'idle status write failed', status, err: created.error.message }); return; }
     for (const r of created.data ?? []) written.add(slotKey(r.agency_id, r.unique_id));
     const byAgency = new Map<string, string[]>();
     for (const s of todo) byAgency.set(s.agencyId, [...(byAgency.get(s.agencyId) ?? []), s.uid]);
     for (const [agencyId, uids] of byAgency) {
       for (const ids of chunks(uids)) {
-        const upd = await withTimeout(this.db.from('stream_status').update(base).eq('agency_id', agencyId).in('unique_id', ids)
-          .or(`worker_id.eq.${WORKER_ID},updated_at.lt.${stale}`).select('agency_id, unique_id'), 'update idle status');
+        const upd = await abortable(signal => this.db.from('stream_status').update(base).eq('agency_id', agencyId).in('unique_id', ids)
+          .or(`worker_id.eq.${WORKER_ID},updated_at.lt.${stale}`).select('agency_id, unique_id').abortSignal(signal), 'update idle status');
         if (upd.error) { log({ level: 'warn', msg: 'idle status write failed', status, err: upd.error.message }); return; }
         for (const r of upd.data ?? []) written.add(slotKey(r.agency_id, r.unique_id));
       }
