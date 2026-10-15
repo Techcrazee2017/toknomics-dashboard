@@ -119,6 +119,16 @@ describe('planSockets', () => {
     expect(p.capacity).toEqual([]);
   });
 
+  it('admits every group that fits from the spare sockets, in order, without skipping any', () => {
+    // Three agencies, cap 10. a has three two-socket battles; b and c have one socket each. Fair share is 3.
+    const targets = [t('a', 'c1', 'o1'), t('a', 'c2', 'o2'), t('a', 'c3', 'o3'), t('b', 'b1'), t('c', 'c9')];
+    const k3 = new Map([['a', 'KA'], ['b', 'KB'], ['c', 'KC']]);
+    const p = planSockets(targets, k3, new Map(), 10);
+    // 2 + 1 + 1 in the guaranteed pass, then a's remaining two battles from the 6 spare sockets: 8 of 10 used, nothing over capacity.
+    expect(p.run.size).toBe(8);
+    expect(p.capacity).toEqual([]);
+  });
+
   it('derives the per-agency budget from the plan roster limit', () => {
     expect(socketBudget('starter')).toBe(20);
     expect(socketBudget('scale')).toBe(300);
@@ -268,15 +278,30 @@ describe('Supervisor', () => {
   });
 
   describe('idle status writes', () => {
-    /** Records the writes markIdle makes. `failUpdate` makes the fenced update fail. */
-    function idleDb(failUpdate = false) {
+    /**
+     * Records the writes markIdle makes. `inserted` are the rows the insert-ignore created; `updated` returns the uids the fenced
+     * update matched (default: all of them). `failUpdate` makes the update fail.
+     */
+    function idleDb(opts: { failUpdate?: boolean; inserted?: (rows: { agency_id: string; unique_id: string }[]) => unknown[]; updated?: (ids: string[], agencyId: string) => string[] } = {}) {
       const calls: { op: string; rows?: unknown; patch?: Record<string, unknown>; opts?: Record<string, unknown>; filters: [string, unknown][] }[] = [];
       const db = { from: () => ({
-        upsert: async (rows: unknown, opts: Record<string, unknown>) => { calls.push({ op: 'upsert', rows, opts, filters: [] }); return { error: null }; },
+        upsert: (rows: { agency_id: string; unique_id: string }[], o: Record<string, unknown>) => {
+          calls.push({ op: 'upsert', rows, opts: o, filters: [] });
+          return { select: async () => ({ data: opts.inserted ? opts.inserted(rows) : rows, error: null }) };
+        },
         update: (patch: Record<string, unknown>) => {
           const c = { op: 'update', patch, filters: [] as [string, unknown][] }; calls.push(c);
-          const q: any = { eq: (k: string, v: unknown) => { c.filters.push([k, v]); return q; }, in: (k: string, v: unknown) => { c.filters.push([k, v]); return q; },
-            or: async (f: string) => { c.filters.push(['or', f]); return { error: failUpdate ? { message: 'down' } : null }; } };
+          const q: any = {
+            eq: (k: string, v: unknown) => { c.filters.push([k, v]); return q; },
+            in: (k: string, v: unknown) => { c.filters.push([k, v]); return q; },
+            or: (f: string) => { c.filters.push(['or', f]); return q; },
+            select: async () => {
+              if (opts.failUpdate) return { data: null, error: { message: 'down' } };
+              const agencyId = String(c.filters.find(f => f[0] === 'agency_id')![1]), ids = c.filters.find(f => f[0] === 'unique_id')![1] as string[];
+              const hit = opts.updated ? opts.updated(ids, agencyId) : ids;
+              return { data: hit.map(unique_id => ({ agency_id: agencyId, unique_id })), error: null };
+            },
+          };
           return q;
         },
       }) };
@@ -299,9 +324,25 @@ describe('Supervisor', () => {
       }
     });
 
+    it('retries a slot whose row a live process still owns, and records it once it is actually written', async () => {
+      const { Supervisor } = await import('../src/worker');
+      let ownerQuiet = false;
+      // The insert-ignore creates nothing (the row exists); the fenced update matches only once the other owner has gone quiet.
+      const { db, calls } = idleDb({ inserted: () => [], updated: ids => (ownerQuiet ? ids : []) });
+      const sup = new Supervisor(db, {} as never) as unknown as { markIdle: (s: { agencyId: string; uid: string }[], st: 'capacity') => Promise<void>; idle: Map<string, string> };
+      await sup.markIdle([{ agencyId: 'a', uid: 'x' }], 'capacity');
+      expect(sup.idle.size).toBe(0);                       // matched nothing: not recorded
+      const afterFirst = calls.length;
+      await sup.markIdle([{ agencyId: 'a', uid: 'x' }], 'capacity');
+      expect(calls.length).toBeGreaterThan(afterFirst);    // so it is attempted again, not skipped
+      ownerQuiet = true;
+      await sup.markIdle([{ agencyId: 'a', uid: 'x' }], 'capacity');
+      expect(sup.idle.get('a:x')).toBe('capacity');        // written once the lease allows it
+    });
+
     it('does not record a slot as written when the update fails, so it is retried', async () => {
       const { Supervisor } = await import('../src/worker');
-      const bad = idleDb(true);
+      const bad = idleDb({ failUpdate: true });
       const sup = new Supervisor(bad.db, {} as never) as unknown as { markIdle: (s: { agencyId: string; uid: string }[], st: 'paused') => Promise<void>; idle: Map<string, string> };
       await sup.markIdle([{ agencyId: 'a', uid: 'x' }], 'paused');
       expect(sup.idle.size).toBe(0);

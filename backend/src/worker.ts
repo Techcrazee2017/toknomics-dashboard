@@ -322,11 +322,12 @@ export function planSockets(
       admit(q, group); taken.get(q)!.add(group); mine += group.length;
     }
   }
+  // A fixed list per agency, built once: indexing a list that shrinks as groups are admitted would skip every second one.
+  const rest = new Map(queues.map(q => [q, q.groups.filter(g => !taken.get(q)!.has(g))]));
   for (let round = 0; ; round++) {
     let more = false;
     for (const q of queues) {
-      const pending = q.groups.filter(g => !taken.get(q)!.has(g));
-      const group = pending[round];
+      const group = rest.get(q)![round];
       if (!group) continue;
       more = true;
       if (used + group.length > max) continue;
@@ -472,19 +473,25 @@ export class Supervisor {
     const now = Date.now();
     const base = { status, worker_id: WORKER_ID, next_retry_at: null, connected_at: null, viewer_count: null, updated_at: new Date(now).toISOString() };
     const stale = new Date(now - LEASE_MS).toISOString();
+    // `.select()` returns only the rows each statement actually wrote: new rows from the insert, and rows this process owns (or whose
+    // owner went quiet) from the update. A slot another live process still owns matches neither, so it is not recorded and is retried
+    // on the next reconcile, after the lease has had a chance to expire.
+    const written = new Set<string>();
     const created = await withTimeout(this.db.from('stream_status').upsert(
-      todo.map(s => ({ agency_id: s.agencyId, unique_id: s.uid, ...base })), { onConflict: 'agency_id,unique_id', ignoreDuplicates: true }), 'create idle status');
+      todo.map(s => ({ agency_id: s.agencyId, unique_id: s.uid, ...base })), { onConflict: 'agency_id,unique_id', ignoreDuplicates: true }).select('agency_id, unique_id'), 'create idle status');
     if (created.error) { log({ level: 'warn', msg: 'idle status write failed', status, err: created.error.message }); return; }
+    for (const r of created.data ?? []) written.add(slotKey(r.agency_id, r.unique_id));
     const byAgency = new Map<string, string[]>();
     for (const s of todo) byAgency.set(s.agencyId, [...(byAgency.get(s.agencyId) ?? []), s.uid]);
     for (const [agencyId, uids] of byAgency) {
       for (const ids of chunks(uids)) {
         const upd = await withTimeout(this.db.from('stream_status').update(base).eq('agency_id', agencyId).in('unique_id', ids)
-          .or(`worker_id.eq.${WORKER_ID},updated_at.lt.${stale}`), 'update idle status');
+          .or(`worker_id.eq.${WORKER_ID},updated_at.lt.${stale}`).select('agency_id, unique_id'), 'update idle status');
         if (upd.error) { log({ level: 'warn', msg: 'idle status write failed', status, err: upd.error.message }); return; }
+        for (const r of upd.data ?? []) written.add(slotKey(r.agency_id, r.unique_id));
       }
     }
-    for (const s of todo) this.idle.set(slotKey(s.agencyId, s.uid), status);
+    for (const s of todo) if (written.has(slotKey(s.agencyId, s.uid))) this.idle.set(slotKey(s.agencyId, s.uid), status);
   }
 
   /** Euler rejected the agency's key: record it so the dashboard says so and ingestion stops until a new key is saved. */
