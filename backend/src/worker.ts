@@ -59,6 +59,9 @@ export function backoff(attempt: number, minDelay: number, rand = Math.random): 
   return Math.max(minDelay, Math.round(rand() * exp));
 }
 
+const withTimeout = <T>(p: PromiseLike<T>, what: string, ms = DB_TIMEOUT_MS): Promise<T> =>
+  Promise.race([Promise.resolve(p), new Promise<never>((_, rej) => setTimeout(() => rej(new Error(`${what} timed out after ${ms}ms`)), ms).unref())]);
+
 export type StreamHooks = {
   /** Euler closed with 4401: the agency's key is no longer accepted. */
   onInvalidKey?: (agencyId: string) => void;
@@ -85,12 +88,21 @@ export class StreamConnection {
     private db: SupabaseClient, private gifts: GiftBuffer, private catalog: () => GiftCatalog, private hooks: StreamHooks = {},
   ) {}
 
+  /**
+   * Restores the stored room and event count, then opens the socket. The lookup is best-effort: if it fails or hangs
+   * the socket still opens with defaults (worst case the live-session clock restarts), so a slow database never
+   * leaves a tracked creator without a socket. stop() during the lookup is honoured by connect().
+   */
   async start() {
     this.stopped = false;
-    const { data } = await this.db.from('stream_status').select('room_id, events_ingested')
-      .eq('agency_id', this.agencyId).eq('unique_id', this.uniqueId).maybeSingle();
-    this.storedRoomId = data?.room_id ?? null;
-    this.events = Number(data?.events_ingested ?? 0);
+    try {
+      const { data } = await withTimeout(this.db.from('stream_status').select('room_id, events_ingested')
+        .eq('agency_id', this.agencyId).eq('unique_id', this.uniqueId).maybeSingle(), 'load stream status');
+      this.storedRoomId = data?.room_id ?? null;
+      this.events = Number(data?.events_ingested ?? 0);
+    } catch (e) {
+      log({ level: 'warn', msg: 'stream status lookup failed, connecting with defaults', agency: this.agencyId, uid: this.uniqueId, err: (e as Error).message });
+    }
     this.connect();
   }
 
@@ -277,9 +289,6 @@ export function planSockets(
   return plan;
 }
 
-const withTimeout = <T>(p: PromiseLike<T>, what: string, ms = DB_TIMEOUT_MS): Promise<T> =>
-  Promise.race([Promise.resolve(p), new Promise<never>((_, rej) => setTimeout(() => rej(new Error(`${what} timed out after ${ms}ms`)), ms).unref())]);
-
 class Supervisor {
   private conns = new Map<string, StreamConnection>();
   /** Last status written for wanted slots that have no socket (paused / capacity), so we write on change only. */
@@ -364,7 +373,13 @@ class Supervisor {
         if (existing) { existing.rekey(slot.apiKey); continue; }
         const c = new StreamConnection(slot.agencyId, slot.uid, slot.apiKey, this.db, this.gifts, () => this.catalog, { onInvalidKey: a => void this.markKeyInvalid(a) });
         this.conns.set(k, c);
-        await withTimeout(c.start(), 'start socket');
+        try { await c.start(); }
+        catch (e) {
+          // start() handles its own lookup failures; anything else must not leave a socketless entry that counts against capacity.
+          c.stop(); this.conns.delete(k);
+          log({ level: 'error', msg: 'could not start socket', agency: slot.agencyId, uid: slot.uid, err: (e as Error).message });
+          continue;
+        }
         log({ msg: 'tracked', agency: slot.agencyId, uid: slot.uid });
       }
       await this.markIdle(plan.paused, 'paused');

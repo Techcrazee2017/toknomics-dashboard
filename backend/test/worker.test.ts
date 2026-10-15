@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { backoff, planSockets, policyFor, slotKey, socketBudget, socketUrl, type Target } from '../src/worker';
 
 describe('policyFor', () => {
@@ -116,5 +116,35 @@ describe('StreamConnection status writes', () => {
     await set({ status: 'live' });
     await set({ room_id: '7400', viewer_count: 12 });
     expect(writes[1]).toMatchObject({ agency_id: 'agency-1', unique_id: 'nova_shift', status: 'live', room_id: '7400', viewer_count: 12 });
+  });
+});
+
+describe('StreamConnection.start', () => {
+  it('still opens the socket when the status lookup hangs', async () => {
+    vi.useFakeTimers();
+    try {
+      const { StreamConnection } = await import('../src/worker');
+      const hang = { from: () => ({ select: () => ({ eq: () => ({ eq: () => ({ maybeSingle: () => new Promise(() => {}) }) }) }) }) };
+      const c = new StreamConnection('agency-1', 'nova_shift', 'k', hang as never, {} as never, () => new Map());
+      const connect = vi.spyOn(c as unknown as { connect: () => void }, 'connect').mockImplementation(() => {});
+      const started = c.start();
+      await vi.advanceTimersByTimeAsync(20_001);
+      await started;
+      expect(connect).toHaveBeenCalledTimes(1);
+    } finally { vi.useRealTimers(); }
+  });
+  it('does not connect if it was stopped while the lookup was pending', async () => {
+    const { StreamConnection } = await import('../src/worker');
+    let release!: (v: unknown) => void;
+    const slow = { from: () => ({ select: () => ({ eq: () => ({ eq: () => ({ maybeSingle: () => new Promise(r => { release = r; }) }) }) }), upsert: async () => ({ error: null }), update: () => ({ eq: () => ({ eq: () => ({ eq: async () => ({ error: null }) }) }) }) }) };
+    const c = new StreamConnection('agency-1', 'nova_shift', 'k', slow as never, {} as never, () => new Map());
+    const connect = vi.spyOn(c as unknown as { connect: () => void }, 'connect');
+    const started = c.start();
+    c.stop();
+    release({ data: null });
+    await started;
+    expect(connect).toHaveBeenCalledTimes(1);
+    // connect() itself returns early when stopped: no socket is opened.
+    expect((c as unknown as { ws?: unknown }).ws).toBeUndefined();
   });
 });
