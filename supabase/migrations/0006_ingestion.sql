@@ -67,14 +67,15 @@ $$;
 -- another's metadata, or a "deleted" secret still stored. Each operation is now one function, so it commits or rolls back whole,
 -- and concurrent callers are serialised by the row locks they take.
 
--- Stores a verified key, drops the moderation session (its tokens belong to the old key) and marks the connection valid.
+-- Stores a verified key, drops the moderation session and any pending authorization (both belong to the old key) and marks the connection valid.
 create or replace function public.save_euler_key(p_agency uuid, p_key_enc text, p_last4 text, p_account_id bigint)
 returns void language plpgsql set search_path = '' as $$
 begin
   insert into public.euler_credentials (agency_id, api_key_enc, oauth_access_enc, oauth_refresh_enc, oauth_expires_at, updated_at)
     values (p_agency, p_key_enc, null, null, null, now())
   on conflict (agency_id) do update set
-    api_key_enc = excluded.api_key_enc, oauth_access_enc = null, oauth_refresh_enc = null, oauth_expires_at = null, updated_at = now();
+    api_key_enc = excluded.api_key_enc, oauth_access_enc = null, oauth_refresh_enc = null, oauth_expires_at = null,
+    oauth_state_hash = null, oauth_state_expires_at = null, updated_at = now();
   update public.euler_connections set
     api_key_last4 = p_last4, key_status = 'valid', euler_account_id = p_account_id,
     status = 'disconnected', connected_at = null, account_label = null, updated_at = now()

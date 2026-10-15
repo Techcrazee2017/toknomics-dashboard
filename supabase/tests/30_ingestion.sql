@@ -70,10 +70,12 @@ select pg_temp.expect((select count(*) from stream_status) = 1, 'status rows are
 
 -- ── atomic credential functions ──
 insert into euler_connections (agency_id) values ('b0000000-0000-0000-0000-000000000002') on conflict do nothing;
+update euler_credentials set oauth_state_hash = 'pending', oauth_state_expires_at = now() + interval '10 minutes' where agency_id = 'a0000000-0000-0000-0000-000000000001';
 set role service_role;
 select public.save_euler_key('a0000000-0000-0000-0000-000000000001', 'v1.new', '9999', 77);
 reset role;
-select pg_temp.expect((select api_key_enc = 'v1.new' and oauth_access_enc is null from euler_credentials where agency_id = 'a0000000-0000-0000-0000-000000000001')
+select pg_temp.expect((select api_key_enc = 'v1.new' and oauth_access_enc is null
+       and oauth_state_hash is null and oauth_state_expires_at is null from euler_credentials where agency_id = 'a0000000-0000-0000-0000-000000000001')
   and (select key_status = 'valid' and api_key_last4 = '9999' and euler_account_id = 77 and status = 'disconnected'
        from euler_connections where agency_id = 'a0000000-0000-0000-0000-000000000001'),
   'save_euler_key writes the ciphertext and the verified metadata together');
