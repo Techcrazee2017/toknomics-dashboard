@@ -180,6 +180,22 @@ describe('StreamConnection.start', () => {
       expect(connect).toHaveBeenCalledTimes(1);
     } finally { vi.useRealTimers(); }
   });
+  it('still opens the socket when the ownership claim hangs', async () => {
+    vi.useFakeTimers();
+    try {
+      const { StreamConnection } = await import('../src/worker');
+      const db = { from: () => ({
+        select: () => ({ eq: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null }) }) }) }),
+        upsert: () => new Promise(() => {}), // the claim never settles
+      }) };
+      const c = new StreamConnection('agency-1', 'nova_shift', 'k', db as never, {} as never, () => new Map());
+      const connect = vi.spyOn(c as unknown as { connect: () => void }, 'connect').mockImplementation(() => {});
+      const started = c.start();
+      await vi.advanceTimersByTimeAsync(20_001);
+      await started;
+      expect(connect).toHaveBeenCalledTimes(1);
+    } finally { vi.useRealTimers(); }
+  });
   it('does not connect if it was stopped while the lookup was pending', async () => {
     const { StreamConnection } = await import('../src/worker');
     let release!: (v: unknown) => void;

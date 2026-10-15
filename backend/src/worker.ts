@@ -105,7 +105,9 @@ export class StreamConnection {
     }
     // The newest process to start a socket owns the row. Every later write is fenced on worker_id, so during a rolling
     // deploy the old process can no longer touch what the new one now reports.
-    await this.setStatus({ status: 'connecting', next_retry_at: null }, 'claim').catch(() => {});
+    // Bounded like the lookup above: a hung write must not keep the socket from opening or stall the supervisor.
+    try { await withTimeout(this.setStatus({ status: 'connecting', next_retry_at: null }, 'claim'), 'claim stream status'); }
+    catch (e) { log({ level: 'warn', msg: 'status claim failed, connecting anyway', agency: this.agencyId, uid: this.uniqueId, err: (e as Error).message }); }
     this.connect();
   }
 
@@ -412,7 +414,7 @@ class Supervisor {
         log({ msg: 'tracked', agency: slot.agencyId, uid: slot.uid });
       }
       await this.markIdle(plan.paused, 'paused');
-      await this.markIdle(plan.capacity, 'capacity');
+      await this.markIdle(plan.capacity, 'capacity');  // each write is bounded by withTimeout, so a hung database can't wedge the loop
 
       workerState.sockets = this.conns.size;
       workerState.maxSockets = MAX_SOCKETS;
@@ -434,9 +436,9 @@ class Supervisor {
     const rows = slots.filter(s => this.idle.get(slotKey(s.agencyId, s.uid)) !== status);
     if (!rows.length) return;
     const now = new Date().toISOString();
-    const { error } = await this.db.from('stream_status').upsert(
+    const { error } = await withTimeout(this.db.from('stream_status').upsert(
       rows.map(s => ({ agency_id: s.agencyId, unique_id: s.uid, status, worker_id: WORKER_ID, next_retry_at: null, connected_at: null, viewer_count: null, updated_at: now })),
-      { onConflict: 'agency_id,unique_id' });
+      { onConflict: 'agency_id,unique_id' }), 'write idle status');
     if (error) { log({ level: 'warn', msg: 'idle status write failed', status, err: error.message }); return; }
     for (const s of rows) this.idle.set(slotKey(s.agencyId, s.uid), status);
   }

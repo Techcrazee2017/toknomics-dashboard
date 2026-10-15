@@ -11,9 +11,12 @@
 alter table public.euler_connections
   add column if not exists key_status text not null default 'unknown' check (key_status in ('unknown', 'valid', 'invalid')),
   add column if not exists cookie_ack_at timestamptz;
--- A connection only reached 'connected' after the key was verified against Euler, so keep those agencies ingesting
--- instead of asking every Founder to paste the key again.
-update public.euler_connections set key_status = 'valid' where status = 'connected' and api_key_last4 is not null;
+-- A connection only reached 'connected' after the key was verified against Euler, and disconnecting kept both the key and
+-- the Euler account id it was verified as. Keep those agencies ingesting instead of asking every Founder to paste the key
+-- again. A key replaced after that (the id is not cleared) can be wrongly marked valid, which corrects itself: Euler closes
+-- its first socket with 4401 and the worker flags the key invalid. The opposite mistake would be an outage until re-paste.
+update public.euler_connections set key_status = 'valid'
+  where api_key_last4 is not null and (status = 'connected' or euler_account_id is not null);
 
 -- ── stream_status: one row per (agency, creator) ────────────────────────────
 delete from public.stream_status;
