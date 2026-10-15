@@ -1,14 +1,19 @@
 import { useState, type FormEvent } from 'react';
+import { Link, useLocation } from 'react-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { keys } from '../lib/data';
 import { supabase } from '../lib/supabase';
+import { useTitle } from '../lib/useTitle';
 import { Field } from '../components/ui';
 
 export function SignIn() {
+  useTitle('Sign in · TokNomics');
+  // Set by Landing when a sign-in or invite link comes back expired or already used.
+  const linkFailed = (useLocation().state as { linkFailed?: boolean } | null)?.linkFailed;
   const [email, setEmail] = useState('');
   const [state, setState] = useState<'idle' | 'sending' | 'sent'>('idle');
-  const [err, setErr] = useState('');
+  const [err, setErr] = useState(linkFailed ? 'That link is invalid or has expired. Enter your email for a new one.' : '');
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) return setErr('Enter a valid email address');
@@ -23,6 +28,7 @@ export function SignIn() {
         {state === 'sent' ? <p className="card-body" style={{ margin: 0 }}>Check {email.trim()} for a sign-in link. You can close this tab.</p> : <>
           <Field label="Work email" error={err}><input className="input" type="email" autoComplete="email" autoFocus value={email} onChange={e => { setEmail(e.target.value); setErr(''); }} placeholder="you@agency.com" /></Field>
           <button className="btn btn-primary" disabled={state === 'sending'}>{state === 'sending' ? 'Sending…' : 'Email me a sign-in link'}</button>
+          <p className="tn-auth-legal">New here? The link creates your account. By continuing you agree to the <Link to="/terms">Terms of Service</Link> and <Link to="/privacy">Privacy Policy</Link>.</p>
         </>}
       </form>
     </div>

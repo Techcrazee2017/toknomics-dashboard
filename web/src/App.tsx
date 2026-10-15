@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { Navigate, Route, Routes } from 'react-router';
 import type { Session } from '@supabase/supabase-js';
 import { useQueryClient } from '@tanstack/react-query';
@@ -17,6 +17,8 @@ import { Overview } from './screens/Overview';
 import { Rankings } from './screens/Rankings';
 import { Roster } from './screens/Roster';
 import { Team } from './screens/Team';
+import { Landing, Pricing } from './screens/public/Landing';
+import { Privacy, Refunds, Terms } from './screens/public/Legal';
 
 const AGENCY_KEY = 'tn.agency';
 
@@ -30,9 +32,19 @@ export function App() {
   }, [qc]);
 
   if (configError) return <div className="tn-auth"><div className="card"><span className="card-title">Configuration needed</span><p className="card-body">{configError}</p></div></div>;
-  if (session === undefined) return null;
-  if (!session) return <SignIn />;
-  return <Workspace session={session} />;
+  // Signed-in visitors skip the landing and sign-in pages; everything else waits for the session to resolve.
+  const gate = (signedOut: ReactNode, signedIn: ReactNode) => session === undefined ? null : session ? signedIn : signedOut;
+  return (
+    <Routes>
+      <Route path="/" element={gate(<Landing />, <Navigate to="/overview" replace />)} />
+      <Route path="/pricing" element={<Pricing />} />
+      <Route path="/terms" element={<Terms />} />
+      <Route path="/privacy" element={<Privacy />} />
+      <Route path="/refunds" element={<Refunds />} />
+      <Route path="/login" element={gate(<SignIn />, <Navigate to="/overview" replace />)} />
+      <Route path="/*" element={gate(<Navigate to="/login" replace />, session && <Workspace session={session} />)} />
+    </Routes>
+  );
 }
 
 function Workspace({ session }: { session: Session }) {

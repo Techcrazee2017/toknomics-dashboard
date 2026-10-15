@@ -15,7 +15,10 @@ describe('credential sealing', () => {
   it('binds the ciphertext to its agency', () => expect(() => open(seal('x', 'agency-1'), 'agency-2')).toThrow());
   it('detects tampering', () => {
     const parts = seal('x', 'a').split('.');
-    parts[3] = Buffer.from('y').toString('base64url');
+    // Flip a bit: overwriting with a fixed byte is a no-op 1 time in 256.
+    const ct = Buffer.from(parts[3]!, 'base64url');
+    ct[0]! ^= 1;
+    parts[3] = ct.toString('base64url');
     expect(() => open(parts.join('.'), 'a')).toThrow();
   });
 });

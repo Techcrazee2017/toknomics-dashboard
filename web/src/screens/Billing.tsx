@@ -7,6 +7,7 @@ import { api } from '../lib/api';
 import { keys, useCreators, useMembers } from '../lib/data';
 import { PageHeader } from '../components/Shell';
 import { Dialog } from '../components/ui';
+import { PlanCard } from '../components/PlanCard';
 
 export function Billing() {
   const { agency, role, toast } = useAgency();
@@ -31,7 +32,7 @@ export function Billing() {
   const p = pick ? planOf(pick) : null;
   const warnings: string[] = [];
   if (p) {
-    if (p.limit !== null && nCreators > p.limit) warnings.push(`You track ${nCreators} creators. ${p.short} allows ${p.limit}; you won't be able to add more until you're under the limit.`);
+    if (nCreators > p.limit) warnings.push(`You track ${nCreators} creators. ${p.short} allows ${p.limit}; you won't be able to add more until you're under the limit.`);
     if (!p.multiSeat && nSeats > 1) warnings.push(`Multi-seat team access is a Scale feature. ${nSeats - 1} teammates can't be invited on ${p.short}.`);
   }
   const confirm = async () => {
@@ -71,8 +72,8 @@ export function Billing() {
         <div className="card elev-sm tn-card gap-6">
           <span className="card-kicker">Usage</span>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <div className="tn-between"><span>Creators on roster</span><span className="tnum" style={{ color: 'var(--color-neutral-300)' }}>{nCreators} of {cur.limit ?? 'unlimited'}</span></div>
-            <div style={{ height: 6, borderRadius: 3, background: 'var(--color-neutral-900)' }}><span style={{ display: 'block', height: '100%', borderRadius: 3, background: 'var(--color-accent-500)', width: (cur.limit ? Math.min(100, (nCreators / cur.limit) * 100) : Math.min(100, nCreators)) + '%' }} /></div>
+            <div className="tn-between"><span>Creators on roster</span><span className="tnum" style={{ color: 'var(--color-neutral-300)' }}>{nCreators} of {cur.limit}</span></div>
+            <div style={{ height: 6, borderRadius: 3, background: 'var(--color-neutral-900)' }}><span style={{ display: 'block', height: '100%', borderRadius: 3, background: 'var(--color-accent-500)', width: Math.min(100, (nCreators / cur.limit) * 100) + '%' }} /></div>
           </div>
           <div className="tn-between"><span>Team seats</span><span className="tnum" style={{ color: 'var(--color-neutral-300)' }}>{nSeats} {nSeats === 1 ? 'seat' : 'seats'}{cur.multiSeat ? '' : ' · single seat plan'}</span></div>
         </div>
@@ -81,19 +82,10 @@ export function Billing() {
         {PLANS.map(t => {
           const current = t.key === cur.key && paying;
           return (
-            <div key={t.key} className="card tn-card gap-6" style={{ boxShadow: t.key === cur.key ? '0 0 0 1px var(--color-accent)' : 'var(--shadow-sm)' }}>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                <div className="tn-between"><span className="card-title">{t.name}</span>{t.key === cur.key && <span className="tag tag-outline">Current</span>}</div>
-                <span style={{ fontSize: 13, color: 'var(--color-neutral-400)' }}>{t.who}</span>
-              </div>
-              <div><span className="tnum" style={{ fontSize: 28, fontFamily: 'var(--font-heading)', fontWeight: 500, letterSpacing: '-0.02em' }}>{t.price}</span><span style={{ color: 'var(--color-neutral-500)' }}> / month</span></div>
-              <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 8, flex: 1 }}>
-                {t.feats.map(f => <li key={f} style={{ display: 'flex', gap: 8, alignItems: 'baseline', color: 'var(--color-neutral-200)' }}><i className="ph ph-check" style={{ color: 'var(--color-accent)', flex: 'none' }} />{f}</li>)}
-              </ul>
-              {current ? <button className="btn btn-block" disabled style={{ borderColor: 'var(--color-divider)' }}>Your plan</button>
+            <PlanCard key={t.key} plan={t} current={t.key === cur.key} badge={t.key === cur.key && <span className="tag tag-outline">Current</span>}
+              action={current ? <button className="btn btn-block" disabled style={{ borderColor: 'var(--color-divider)' }}>Your plan</button>
                 : canBill ? <button className="btn btn-secondary btn-block" onClick={() => setPick(t.key)}>{paying ? `Switch to ${t.short}` : `Choose ${t.short}`}</button>
-                : <button className="btn btn-block" disabled style={{ borderColor: 'var(--color-divider)' }}>Founders manage billing</button>}
-            </div>
+                : <button className="btn btn-block" disabled style={{ borderColor: 'var(--color-divider)' }}>Founders manage billing</button>} />
           );
         })}
       </section>

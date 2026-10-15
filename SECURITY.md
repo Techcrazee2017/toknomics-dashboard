@@ -1,21 +1,11 @@
 # Security Policy
 
-## Supported Versions
+## Reporting a vulnerability
 
-Use this section to tell people about which versions of your project are
-currently being supported with security updates.
+Email **support@backwoodstechsolutions.com** with "Security" in the subject. Include what you found, how to reproduce it and the impact you expect. Please don't open a public GitHub issue for security problems, and don't access, change or delete data that isn't yours while testing.
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 5.1.x   | :white_check_mark: |
-| 5.0.x   | :x:                |
-| 4.0.x   | :white_check_mark: |
-| < 4.0   | :x:                |
+We'll acknowledge your report within 3 business days and keep you updated until it's resolved. If the report is valid, we'll fix it as quickly as its severity warrants and credit you if you'd like.
 
-## Reporting a Vulnerability
+## Supported versions
 
-Use this section to tell people how to report a vulnerability.
-
-Tell them where to go, how often they can expect to get an update on a
-reported vulnerability, what to expect if the vulnerability is accepted or
-declined, etc.
+TokNomics is a hosted service: only the version running at https://toknomics.backwoodstechsolutions.com (the `main` branch) is supported.

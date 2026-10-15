@@ -65,7 +65,7 @@ export function Roster() {
       {!pl.loading && cards.length === 0 && (
         <div className="card tn-card" style={{ padding: 'var(--space-8)', alignItems: 'flex-start' }}>
           <div className="card-title">No creators{prefs.teamId !== 'all' || prefs.tier !== 'all' ? ' match these filters' : ' yet'}</div>
-          <p className="card-body">Add the creators your agency manages to see their P&L. {plan.limit ? `Your ${plan.short} plan allows ${plan.limit}.` : ''}</p>
+          <p className="card-body">Add the creators your agency manages to see their P&L. Your {plan.short} plan allows {plan.limit}.</p>
           {CAN.editRoster(role) && <button className="btn btn-primary" onClick={() => setAdding(true)}><i className="ph ph-user-plus" />Add creator</button>}
         </div>
       )}

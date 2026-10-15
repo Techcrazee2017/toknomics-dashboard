@@ -34,10 +34,14 @@ export const PURPOSE_KEYS = PURPOSES.map(p => p.key) as [Purpose, ...Purpose[]];
 export const TIERS = ['S', 'A', 'B'] as const;
 export type Tier = (typeof TIERS)[number];
 
+/** What each plan sells. List only behaviour the product ships today (plans.test.ts enforces it). */
 export const PLANS = [
-  { key: 'starter', name: 'Starter Agency', short: 'Starter', who: 'Solo managers & boutique agencies', price: '$49', limit: 10, multiSeat: false, feats: ['Up to 10 creators tracked', 'Basic outgoing ledger', 'Weekly CSV exports'] },
-  { key: 'growth', name: 'Growth Agency', short: 'Growth', who: 'Mid-size agencies running daily battles', price: '$149', limit: 50, multiSeat: false, feats: ['Up to 50 creators', 'Real-time battle target tracking', 'Creator P&L cards', 'Webhook alerts'] },
-  { key: 'scale', name: 'Scale / Enterprise', short: 'Scale', who: 'Top-tier TikTok LIVE agencies', price: '$299 – $499', limit: null, multiSeat: true, feats: ['Unlimited creators', 'Multi-seat team access', 'Custom API ingestion', 'Priority support'] },
+  { key: 'starter', name: 'Starter Agency', short: 'Starter', who: 'Solo managers & boutique agencies', price: '$49', limit: 10, multiSeat: false,
+    feats: ['Up to 10 creators on your roster', 'One seat for the Founder', 'Live gift ledger & agency P&L', 'Creator P&L cards', 'Battle target tracking & rankings', 'Ledger CSV export'] },
+  { key: 'growth', name: 'Growth Agency', short: 'Growth', who: 'Mid-size agencies running daily battles', price: '$149', limit: 50, multiSeat: false,
+    feats: ['Up to 50 creators on your roster', 'One seat for the Founder', 'Live gift ledger & agency P&L', 'Creator P&L cards', 'Battle target tracking & rankings', 'Ledger CSV export'] },
+  { key: 'scale', name: 'Scale Agency', short: 'Scale', who: 'Agencies running a team of managers and moderators', price: '$299', limit: 150, multiSeat: true,
+    feats: ['Up to 150 creators on your roster', 'Team seats for Managers & Moderators', 'Live gift ledger & agency P&L', 'Creator P&L cards', 'Battle target tracking & rankings', 'Ledger CSV export'] },
 ] as const;
 export type PlanKey = (typeof PLANS)[number]['key'];
 export const PLAN_KEYS = PLANS.map(p => p.key) as [PlanKey, ...PlanKey[]];
