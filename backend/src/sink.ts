@@ -11,6 +11,9 @@ export async function writeGiftRows(db: SupabaseClient, rows: GiftRow[]) {
   return { inserted: count ?? rows.length };
 }
 
+/** Postgres classes for data the database rejects permanently: integrity (23xxx), bad value (22xxx). */
+const POISON = new Set(['23502', '23503', '23514', '22001', '22003', '22007', '22P02']);
+
 /** Buffers rows and flushes every `intervalMs` or at `maxBatch`. Failed batches are retried, never dropped silently. */
 export class GiftBuffer {
   private q: GiftRow[] = [];
@@ -40,6 +43,12 @@ export class GiftBuffer {
       this.q.splice(0, batch.length);
       this.failures = 0;
     } catch (e: any) {
+      // A row the database will never accept (FK / check / type violation) would block every gift behind it forever.
+      // Retry the batch row by row, drop the poison rows with a log line, and keep the rest.
+      if (POISON.has(String(e.code))) {
+        await this.isolate(batch);
+        return;
+      }
       this.failures++;
       console.error(JSON.stringify({ level: 'error', msg: 'gift flush failed', code: e.code, err: e.message, queued: this.q.length }));
       if (e.code === '42501') console.error('RLS violation on worker insert: the worker is not using the service role key.');
@@ -47,6 +56,21 @@ export class GiftBuffer {
     } finally {
       this.flushing = false;
     }
+  }
+
+  private async isolate(batch: GiftRow[]) {
+    let dropped = 0;
+    for (const row of batch) {
+      try { await writeGiftRows(this.db, [row]); }
+      catch (e: any) {
+        if (!POISON.has(String(e.code))) { this.failures++; return; } // transient: keep this row and the rest queued for retry
+        dropped++;
+        console.error(JSON.stringify({ level: 'error', msg: 'dropped unwritable gift row', code: e.code, err: e.message, agency: row.agency_id, msg_id: row.msg_id }));
+      }
+      this.q.splice(this.q.indexOf(row), 1);
+    }
+    this.failures = 0;
+    if (dropped) console.error(JSON.stringify({ level: 'error', msg: 'gift batch had unwritable rows', dropped, kept: batch.length - dropped }));
   }
 
   async close() {

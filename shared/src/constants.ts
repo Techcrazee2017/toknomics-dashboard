@@ -61,7 +61,7 @@ export const CLOSE_CODES: ReadonlyArray<readonly [number, string, string]> = [
   [4556, 'WEBCAST_FETCH_ERROR', 'Retry with backoff (1s → 30s).'],
   [4557, 'ROOM_INFO_FETCH_ERROR', 'Retry with backoff (1s → 30s).'],
   [4429, 'TOO_MANY_CONNECTIONS', 'Back off at least 30s. Concurrent socket limit reached.'],
-  [4401, 'INVALID_AUTH', 'Flag the API key on Data source; retry every 10 min.'],
+  [4401, 'INVALID_AUTH', 'Mark the API key rejected on Data source and pause that agency until a new key is saved.'],
   [4403, 'NO_PERMISSION', 'Key or JWT not scoped to this creator; retry every 10 min.'],
   [4400, 'INVALID_OPTIONS', 'Stop. Bad uniqueId. Shown as invalid on the target.'],
 ];

@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
 import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -10,26 +11,52 @@ import {
 } from '@toknomics/shared';
 import { seal, sha256, randomToken } from '../crypto';
 import { log } from '../env';
-import { EulerService, eulerError, makeClient, oauthApp, OAUTH_SCOPES } from './euler';
+import { workerFresh, workerState } from '../health';
+import { EulerService, eulerError, makeClient, oauthApp, OAUTH_SCOPES, type ClientFactory } from './euler';
 import { HttpError, allow, jsonBody, parseBody, rateLimit, requireMember, requireUser, type AppEnv } from './http';
 import { billingRoutes } from './billing';
 
 export type AppConfig = { webOrigin: string; apiPublicUrl: string };
+/** Overridable in tests so no call reaches Euler. */
+export type AppDeps = { makeClient?: ClientFactory };
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export function createApp(db: SupabaseClient, cfg: AppConfig, stripe: Stripe | null) {
-  const euler = new EulerService(db);
+export function createApp(db: SupabaseClient, cfg: AppConfig, stripe: Stripe | null, deps: AppDeps = {}) {
+  const make = deps.makeClient ?? makeClient;
+  const euler = new EulerService(db, make);
   const app = new Hono<AppEnv>();
 
   app.use('*', secureHeaders());
+  app.use('/api/*', bodyLimit({ maxSize: 1024 * 1024, onError: c => c.json({ error: 'Request body too large', code: 'too_large' }, 413) }));
   app.use('/api/*', cors({ origin: cfg.webOrigin, allowHeaders: ['authorization', 'content-type'], allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'], maxAge: 600 }));
 
   app.onError((err, c) => {
     if (err instanceof HttpError) return c.json({ error: err.message, code: err.code, fields: err.fields }, err.status);
-    log({ level: 'error', msg: 'unhandled', path: c.req.path, err: err.message });
+    log({ level: 'error', msg: 'unhandled', path: c.req.path, err: err.message, stack: err.stack });
     return c.json({ error: 'Something went wrong on our side' }, 500);
   });
 
+  // live: the process is up (Railway's health check). ready: it can serve and ingest (what an uptime monitor watches).
   app.get('/api/health', c => c.json({ ok: true }));
+  app.get('/api/health/live', c => c.json({ ok: true }));
+  app.get('/api/health/ready', async c => {
+    let dbOk = false;
+    try {
+      const probe = db.from('agencies').select('id', { head: true }).limit(1).abortSignal(AbortSignal.timeout(2_000));
+      dbOk = !(await probe).error;
+    } catch { dbOk = false; }
+    const workerOk = !workerState.expected || workerFresh();
+    const ok = dbOk && workerOk;
+    const w = workerState;
+    return c.json({
+      ok, db: dbOk,
+      worker: {
+        expected: w.expected, ok: workerOk, lastReconcileAt: w.lastReconcileAt ? new Date(w.lastReconcileAt).toISOString() : null,
+        sockets: w.sockets, maxSockets: w.maxSockets, capacityPct: w.maxSockets ? Math.round((w.sockets / w.maxSockets) * 100) : 0,
+      },
+      version: process.env.RAILWAY_GIT_COMMIT_SHA ?? null,
+    }, ok ? 200 : 503);
+  });
 
   // ── Stripe webhook + OAuth callback: authenticated by signature / state, not by session ──
   billingRoutes(app, db, stripe, cfg);
@@ -45,7 +72,7 @@ export function createApp(db: SupabaseClient, cfg: AppConfig, stripe: Stripe | n
     }
     try {
       const { clientId, clientSecret } = oauthApp();
-      const client = makeClient(await euler.apiKey(agencyId));
+      const client = make(await euler.apiKey(agencyId));
       const r = await client.general.exchangeToken({ client_id: clientId, client_secret: clientSecret, grant_type: 'authorization_code', code, redirect_uri: redirectUri(cfg) });
       const t = r.data.data;
       if (!t?.access_token) throw new Error(r.data.error ? JSON.stringify(r.data.error) : 'No access token returned');
@@ -87,7 +114,9 @@ export function createApp(db: SupabaseClient, cfg: AppConfig, stripe: Stripe | n
   });
 
   // ── Euler connection ──
-  agency.put('/euler', async c => {
+  // The API key alone powers live ingestion and every read-only tool, so saving it is the whole setup for most
+  // agencies. OAuth / cookie is a separate, optional session that only room moderation needs.
+  agency.put('/euler', rateLimit('euler-save', 20, 60_000), async c => {
     const body = parseBody(UpdateConnectionBody, await jsonBody(c));
     const aid = c.get('agencyId'), role = c.get('role');
     const founderOnly = body.apiKey !== undefined || body.cookie !== undefined || body.host !== undefined || body.mode === 'cookie';
@@ -98,9 +127,19 @@ export function createApp(db: SupabaseClient, cfg: AppConfig, stripe: Stripe | n
     const secrets: Record<string, unknown> = {};
     if (body.host !== undefined) patch.host = body.host;
     if (body.pinnedUserId !== undefined) patch.pinned_user_id = body.pinnedUserId || null;
-    if (body.apiKey !== undefined) { secrets.api_key_enc = seal(body.apiKey, aid); patch.api_key_last4 = body.apiKey.slice(-4); }
+    if (body.apiKey !== undefined) {
+      // Verified before it is stored: a key Euler rejects never replaces a working one.
+      const account = await verifyKey(make(body.apiKey));
+      secrets.api_key_enc = seal(body.apiKey, aid);
+      Object.assign(patch, { api_key_last4: body.apiKey.slice(-4), key_status: 'valid', euler_account_id: account.id });
+    }
     if (body.cookie !== undefined) { secrets.cookie_enc = body.cookie ? seal(body.cookie, aid) : null; patch.has_cookie = !!body.cookie; }
-    // Mode (and the key behind every call) is fixed at connection time, so changing either ends the session
+    // Cookie mode makes TikTok see a signed-in session; make the Founder acknowledge the risk once, and record it.
+    if ((body.cookie || body.mode === 'cookie') && !conn.cookie_ack_at) {
+      if (!body.cookieRisk) throw new HttpError(400, 'Confirm that you accept the risk of cookie mode', 'validation', { cookieRisk: 'Confirm that you accept the risk of cookie mode' });
+      patch.cookie_ack_at = now();
+    }
+    // The moderation session's mode (and the key behind its tokens) is fixed when it starts, so changing either ends it.
     if ((body.mode && body.mode !== conn.mode) || body.apiKey !== undefined) {
       Object.assign(patch, { status: 'disconnected', connected_at: null, account_label: null });
       Object.assign(secrets, { oauth_access_enc: null, oauth_refresh_enc: null, oauth_expires_at: null });
@@ -115,22 +154,22 @@ export function createApp(db: SupabaseClient, cfg: AppConfig, stripe: Stripe | n
     return c.json(data);
   });
 
+  // Moderation session (optional). Needs a key Euler has accepted.
   agency.post('/euler/connect', rateLimit('connect', 10, 60_000), async c => {
     allow(c, 'manageCredentials', 'Ask a Founder to finish setup. Only Founders can add credentials.');
     const aid = c.get('agencyId');
-    const conn = await euler.connection(aid);
+    const s = await euler.session(aid, false);
+    const conn = s.conn;
     const cr = await euler.credentials(aid);
-    if (!cr.api_key_enc) throw new HttpError(400, 'An API key is required in both modes', 'validation', { apiKey: 'An API key is required in both modes' });
-    const client = makeClient(await euler.apiKey(aid));
 
     if (conn.mode === 'cookie') {
       if (!cr.cookie_enc) throw new HttpError(400, 'Paste the raw Cookie header. It must include sessionid=', 'validation', { cookie: 'Paste the raw Cookie header. It must include sessionid=' });
-      await markConnected(aid, 'Cookie session', client);
+      if (!conn.cookie_ack_at) throw new HttpError(400, 'Confirm that you accept the risk of cookie mode', 'validation', { cookieRisk: 'Confirm that you accept the risk of cookie mode' });
+      await markConnected(aid, 'Cookie session', s.client);
       return c.json({ status: 'connected' } satisfies ConnectResult);
     }
 
     const { clientId, authorizeUrl } = oauthApp();
-    await verifyKey(client);
     const state = `${aid}.${randomToken()}`;
     const r = await db.from('euler_credentials').upsert({ agency_id: aid, oauth_state_hash: sha256(state), oauth_state_expires_at: new Date(Date.now() + 600_000).toISOString(), updated_at: now() }, { onConflict: 'agency_id' });
     if (r.error) throw new HttpError(500, 'Could not start authorization');
@@ -160,6 +199,23 @@ export function createApp(db: SupabaseClient, cfg: AppConfig, stripe: Stripe | n
     return c.json({ ok: true });
   });
 
+  // Wipes every stored Euler secret and resets the connection. Founders only, and open on any plan so a lapsed agency can still remove its credentials.
+  agency.post('/euler/credentials/delete', rateLimit('cred-delete', 5, 60_000), async c => {
+    allow(c, 'manageCredentials', 'Only Founders can delete Euler credentials');
+    const aid = c.get('agencyId');
+    const wipe = await db.from('euler_credentials').upsert({
+      agency_id: aid, api_key_enc: null, cookie_enc: null, oauth_access_enc: null, oauth_refresh_enc: null, oauth_expires_at: null,
+      oauth_state_hash: null, oauth_state_expires_at: null, updated_at: now(),
+    }, { onConflict: 'agency_id' });
+    if (wipe.error) throw new HttpError(500, 'Could not delete the credentials');
+    const reset = await db.from('euler_connections').update({
+      status: 'disconnected', key_status: 'unknown', api_key_last4: null, has_cookie: false, account_label: null,
+      euler_account_id: null, connected_at: null, updated_at: now(),
+    }).eq('agency_id', aid);
+    if (reset.error) throw new HttpError(500, 'Could not reset the connection');
+    return c.json({ ok: true });
+  });
+
   agency.post('/euler/test', rateLimit('test', 10, 60_000), async c => {
     const aid = c.get('agencyId');
     const s = await euler.session(aid, false);
@@ -168,7 +224,12 @@ export function createApp(db: SupabaseClient, cfg: AppConfig, stripe: Stripe | n
     try {
       const r = await s.client.accounts.getRateLimits();
       if (r.data.minute) rateLimitInfo = { remaining: r.data.minute.remaining, max: r.data.minute.max };
-    } catch (e) { throw eulerError(e); }
+    } catch (e) {
+      const err = eulerError(e);
+      // Euler no longer accepts the key: record it so the dashboard says so and ingestion pauses.
+      if (err.code === 'euler_auth') await db.from('euler_connections').update({ key_status: 'invalid', updated_at: now() }).eq('agency_id', aid);
+      throw err;
+    }
     const ms = Date.now() - t0;
     const { count } = await db.from('gift_transactions').select('id', { count: 'exact', head: true }).eq('agency_id', aid).gte('ingested_at', new Date(Date.now() - 60_000).toISOString());
     return c.json({ ok: true, ms, eventsPerMin: count ?? 0, rateLimit: rateLimitInfo } satisfies TestResult);
@@ -250,10 +311,11 @@ export function createApp(db: SupabaseClient, cfg: AppConfig, stripe: Stripe | n
     return c.json({ ok: true }, 201);
   });
 
-  agency.patch('/members/:userId', async c => {
+  agency.patch('/members/:userId', rateLimit('member-edit', 60, 3_600_000), async c => {
     allow(c, 'manageTeam');
     const body = parseBody(UpdateMemberBody, await jsonBody(c));
     const aid = c.get('agencyId'), uid = c.req.param('userId');
+    if (!UUID.test(uid)) throw new HttpError(404, 'Member not found, or is a Founder');
     if (body.teamId) await assertTeam(aid, body.teamId);
     const patch: Record<string, unknown> = {};
     if (body.role) patch.role = body.role;
@@ -264,8 +326,9 @@ export function createApp(db: SupabaseClient, cfg: AppConfig, stripe: Stripe | n
     return c.json({ ok: true });
   });
 
-  agency.delete('/members/:userId', async c => {
+  agency.delete('/members/:userId', rateLimit('member-edit', 60, 3_600_000), async c => {
     allow(c, 'manageTeam');
+    if (!UUID.test(c.req.param('userId'))) throw new HttpError(404, 'Member not found, or is a Founder');
     const { data, error } = await db.from('agency_members').delete().eq('agency_id', c.get('agencyId')).eq('user_id', c.req.param('userId')).neq('role', 'founder').select('user_id');
     if (error) throw new HttpError(500, 'Could not remove the member');
     if (!data?.length) throw new HttpError(404, 'Member not found, or is a Founder');
@@ -277,7 +340,7 @@ export function createApp(db: SupabaseClient, cfg: AppConfig, stripe: Stripe | n
   return app;
 
   // ── helpers ──
-  async function markConnected(agencyId: string, label: string, client: ReturnType<typeof makeClient>) {
+  async function markConnected(agencyId: string, label: string, client: ReturnType<ClientFactory>) {
     const account = await verifyKey(client);
     const { error } = await db.from('euler_connections').update({
       status: 'connected', account_label: label, euler_account_id: account.id, connected_at: now(), updated_at: now(),
@@ -300,13 +363,13 @@ export function createApp(db: SupabaseClient, cfg: AppConfig, stripe: Stripe | n
       return;
     }
     if (typeof b.room_id === 'string') {
-      const { data } = await db.from('stream_status').select('unique_id').eq('room_id', b.room_id).in('unique_id', ids.length ? ids : ['-']).limit(1);
+      const { data } = await db.from('stream_status').select('unique_id').eq('agency_id', agencyId).eq('room_id', b.room_id).in('unique_id', ids.length ? ids : ['-']).limit(1);
       if (!data?.length) throw new HttpError(403, 'That room is not one of your tracked targets');
     }
   }
 }
 
-async function verifyKey(client: ReturnType<typeof makeClient>) {
+async function verifyKey(client: ReturnType<ClientFactory>) {
   try {
     const r = await client.accounts.retrieveAccountSelf();
     if (!r.data.account) throw new HttpError(400, r.data.message ?? 'Euler did not accept this API key', 'validation', { apiKey: 'Euler did not accept this API key' });

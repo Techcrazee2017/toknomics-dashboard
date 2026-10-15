@@ -1,17 +1,26 @@
 // Persistent Euler Stream ingestion worker.
-// One socket per distinct creator that any agency tracks (as a target or as a battle opponent);
-// gifts fan out to every agency tracking that creator. Each socket authenticates with the API key of
-// a tracking agency whose Euler connection is live, so disconnecting on Data source pauses ingestion.
+// One socket per (agency, creator) pair, where the creator is a tracked target or a battle opponent. Each
+// socket authenticates with that agency's own Euler API key and books gifts to that agency only, so one
+// customer's key, quota and data never serve another. An agency whose key is missing or rejected is paused;
+// agencies over their socket budget, or crowding out others past MAX_SOCKETS, are marked 'capacity'.
+import { randomUUID } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import WebSocket from 'ws';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { planOf } from '@toknomics/shared';
 import { createWebSocketUrl, SchemaVersion, ClientCloseCode as C } from '@eulerstream/euler-websocket-sdk';
 import { log, redact, serviceClient, need } from './env';
 import { open } from './crypto';
 import { parseFrame, giftToRows, isGift, isViewerCount, roomIdOf, viewerCountOf, type GiftCatalog } from './euler';
 import { GiftBuffer } from './sink';
+import { workerState } from './health';
 
-const MAX_SOCKETS = Number(process.env.MAX_SOCKETS ?? 200);
+const MAX_SOCKETS = Number(process.env.MAX_SOCKETS?.trim() || 200);
+/** Sockets one agency may hold: its roster limit, doubled to leave room for battle opponents. */
+export const socketBudget = (plan: string) => planOf(plan).limit * 2;
+/** A stuck Supabase call must not wedge the reconcile loop. */
+const DB_TIMEOUT_MS = 20_000;
+const WORKER_ID = `${process.env.RAILWAY_DEPLOYMENT_ID ?? 'local'}:${process.pid}:${randomUUID().slice(0, 8)}`;
 const RECONCILE_MS = 30_000;
 const CATALOG_MS = 10 * 60_000;
 const STALE_MS = 45_000;      // no frame or pong for this long → terminate and reconnect
@@ -50,6 +59,11 @@ export function backoff(attempt: number, minDelay: number, rand = Math.random): 
   return Math.max(minDelay, Math.round(rand() * exp));
 }
 
+export type StreamHooks = {
+  /** Euler closed with 4401: the agency's key is no longer accepted. */
+  onInvalidKey?: (agencyId: string) => void;
+};
+
 export class StreamConnection {
   private ws?: WebSocket;
   private attempts = 0;
@@ -65,27 +79,31 @@ export class StreamConnection {
   private stopped = false;
   /** Last status written. Every upsert carries it: a partial row would fail stream_status.status NOT NULL on the insert path. */
   private status = 'connecting';
-  agencyIds: string[] = [];
 
-  constructor(readonly uniqueId: string, public apiKey: string, private db: SupabaseClient, private gifts: GiftBuffer, private catalog: () => GiftCatalog) {}
+  constructor(
+    readonly agencyId: string, readonly uniqueId: string, public apiKey: string,
+    private db: SupabaseClient, private gifts: GiftBuffer, private catalog: () => GiftCatalog, private hooks: StreamHooks = {},
+  ) {}
 
   async start() {
     this.stopped = false;
-    const { data } = await this.db.from('stream_status').select('room_id, events_ingested').eq('unique_id', this.uniqueId).maybeSingle();
+    const { data } = await this.db.from('stream_status').select('room_id, events_ingested')
+      .eq('agency_id', this.agencyId).eq('unique_id', this.uniqueId).maybeSingle();
     this.storedRoomId = data?.room_id ?? null;
     this.events = Number(data?.events_ingested ?? 0);
     this.connect();
   }
 
-  stop(status: 'stopped' | 'paused' = 'stopped') {
+  stop(status: 'stopped' | 'paused' | 'capacity' = 'stopped') {
     this.stopped = true;
     clearTimeout(this.retryTimer);
     clearInterval(this.pingTimer);
     this.ws?.close(1000, 'untracked');
-    void this.setStatus({ status, next_retry_at: null, connected_at: null, viewer_count: null });
+    // Guarded by worker_id: during a redeploy the old process stops after the new one has taken over, and must not overwrite its rows.
+    void this.setStatus({ status, next_retry_at: null, connected_at: null, viewer_count: null }, true);
   }
 
-  /** Swaps the key (e.g. the agency that owned it disconnected) by reconnecting with the new one. */
+  /** Swaps the key (e.g. the agency pasted a new one) by reconnecting with it. */
   rekey(apiKey: string) {
     if (apiKey === this.apiKey) return;
     this.apiKey = apiKey;
@@ -100,7 +118,7 @@ export class StreamConnection {
   private connect() {
     if (this.stopped) return;
     const url = socketUrl(this.uniqueId, this.apiKey);
-    log({ msg: 'connect', uid: this.uniqueId, attempt: this.attempts, url: redact(url) });
+    log({ msg: 'connect', agency: this.agencyId, uid: this.uniqueId, attempt: this.attempts, url: redact(url) });
     void this.setStatus({ status: 'connecting', next_retry_at: null });
 
     const ws = new WebSocket(url, { handshakeTimeout: 15_000 });
@@ -110,7 +128,7 @@ export class StreamConnection {
       this.openedAt = this.lastSeen = Date.now();
       clearInterval(this.pingTimer);
       this.pingTimer = setInterval(() => {
-        if (Date.now() - this.lastSeen > STALE_MS) { log({ msg: 'stale socket, terminating', uid: this.uniqueId }); ws.terminate(); return; }
+        if (Date.now() - this.lastSeen > STALE_MS) { log({ msg: 'stale socket, terminating', agency: this.agencyId, uid: this.uniqueId }); ws.terminate(); return; }
         if (ws.readyState === WebSocket.OPEN) ws.ping();
       }, PING_MS);
       void this.setStatus({ status: 'live', close_code: null, last_error: null, connected_at: new Date().toISOString() });
@@ -127,7 +145,7 @@ export class StreamConnection {
           const rid = roomIdOf(ev);
           if (rid) this.onRoom(rid);
         }
-        if (isGift(ev)) this.gifts.push(giftToRows(ev, { creatorUniqueId: this.uniqueId, roomId: this.roomId, agencyIds: this.agencyIds, catalog: this.catalog() }));
+        if (isGift(ev)) this.gifts.push(giftToRows(ev, { creatorUniqueId: this.uniqueId, roomId: this.roomId, agencyIds: [this.agencyId], catalog: this.catalog() }));
         else if (isViewerCount(ev)) this.viewers = viewerCountOf(ev) ?? this.viewers;
       }
       if (Date.now() - this.lastStatusWrite > STATUS_EVERY_MS) {
@@ -135,7 +153,7 @@ export class StreamConnection {
       }
     });
 
-    ws.on('error', err => log({ level: 'warn', msg: 'socket error', uid: this.uniqueId, err: err.message }));
+    ws.on('error', err => log({ level: 'warn', msg: 'socket error', agency: this.agencyId, uid: this.uniqueId, err: err.message }));
 
     // 'close' always follows 'error' in ws, so all reconnect logic lives here
     ws.on('close', (code: number, reason: Buffer) => {
@@ -146,13 +164,14 @@ export class StreamConnection {
       if (Date.now() - this.openedAt > STABLE_MS || p.resetAttempts) this.attempts = 0;
       if (p.status === 'offline') { this.roomId = null; this.viewers = null; }
       if (this.stopped || !p.reconnect) {
-        log({ level: code === C.INVALID_OPTIONS ? 'error' : 'info', msg: 'closed', uid: this.uniqueId, code, why });
+        log({ level: code === C.INVALID_OPTIONS ? 'error' : 'info', msg: 'closed', agency: this.agencyId, uid: this.uniqueId, code, why });
         if (code === C.INVALID_OPTIONS) void this.setStatus({ status: p.status, close_code: code, last_error: why ?? 'Invalid uniqueId', next_retry_at: null, connected_at: null });
         return;
       }
       const delay = backoff(this.attempts++, p.minDelay);
-      log({ level: code === C.INVALID_AUTH || code === C.NO_PERMISSION ? 'error' : 'info', msg: 'closed, retrying', uid: this.uniqueId, code, why, delay });
+      log({ level: code === C.INVALID_AUTH || code === C.NO_PERMISSION ? 'error' : 'info', msg: 'closed, retrying', agency: this.agencyId, uid: this.uniqueId, code, why, delay });
       void this.setStatus({ status: p.status, close_code: code, last_error: why ?? null, connected_at: null, viewer_count: p.status === 'offline' ? null : this.viewers, next_retry_at: new Date(Date.now() + delay).toISOString() });
+      if (code === C.INVALID_AUTH) this.hooks.onInvalidKey?.(this.agencyId);
       this.retryTimer = setTimeout(() => this.connect(), delay);
     });
   }
@@ -166,43 +185,86 @@ export class StreamConnection {
     void this.setStatus(patch);
   }
 
-  private async setStatus(patch: Record<string, unknown>) {
+  private async setStatus(patch: Record<string, unknown>, onlyIfOwner = false) {
     this.lastStatusWrite = Date.now();
     if (typeof patch.status === 'string') this.status = patch.status;
-    const { error } = await this.db.from('stream_status').upsert({ unique_id: this.uniqueId, updated_at: new Date().toISOString(), status: this.status, ...patch }, { onConflict: 'unique_id' });
-    if (error) log({ level: 'warn', msg: 'status write failed', uid: this.uniqueId, err: error.message });
+    const now = new Date().toISOString();
+    const { error } = onlyIfOwner
+      ? await this.db.from('stream_status').update({ updated_at: now, status: this.status, ...patch })
+          .eq('agency_id', this.agencyId).eq('unique_id', this.uniqueId).eq('worker_id', WORKER_ID)
+      : await this.db.from('stream_status').upsert({ agency_id: this.agencyId, unique_id: this.uniqueId, worker_id: WORKER_ID, updated_at: now, status: this.status, ...patch }, { onConflict: 'agency_id,unique_id' });
+    if (error) log({ level: 'warn', msg: 'status write failed', agency: this.agencyId, uid: this.uniqueId, err: error.message });
   }
 }
 
-export type Desired = Map<string, { agencyIds: string[]; apiKey: string | null }>;
+export type Target = { agency_id: string; unique_id: string; opponent_unique_id: string | null };
+export type Slot = { agencyId: string; uid: string; apiKey: string };
+export type SocketPlan = {
+  run: Map<string, Slot>;
+  /** Wanted but the agency has no accepted Euler key. */
+  paused: { agencyId: string; uid: string }[];
+  /** Wanted and keyed, but over the agency's budget or squeezed out by MAX_SOCKETS. */
+  capacity: { agencyId: string; uid: string }[];
+};
+export const slotKey = (agencyId: string, uid: string) => `${agencyId}:${uid}`;
 
-/** Pure: which creators need a socket, which agencies receive their gifts, and whose key opens it. */
-export function desiredSockets(
-  targets: { agency_id: string; unique_id: string; opponent_unique_id: string | null }[],
+/**
+ * Pure: which (agency, creator) sockets run. Each agency wants its tracked creators plus battle opponents,
+ * opened with its own key. An agency is capped at its budget; if the total still exceeds `max`, slots are
+ * handed out round-robin across agencies so a big agency can't starve a small one. Sockets already open win
+ * ties inside an agency, which keeps a stable set instead of churning on every reconcile.
+ */
+export function planSockets(
+  targets: readonly Target[],
   keys: ReadonlyMap<string, string>,
-): Desired {
-  const out: Desired = new Map();
+  budgets: ReadonlyMap<string, number>,
+  max: number,
+  open: ReadonlySet<string> = new Set(),
+): SocketPlan {
+  const wanted = new Map<string, Set<string>>();
   for (const t of targets) {
-    for (const uid of [t.unique_id, t.opponent_unique_id]) {
-      if (!uid) continue;
-      const e = out.get(uid) ?? { agencyIds: [], apiKey: null };
-      if (!e.agencyIds.includes(t.agency_id)) e.agencyIds.push(t.agency_id);
-      out.set(uid, e);
+    const s = wanted.get(t.agency_id) ?? new Set<string>();
+    s.add(t.unique_id);
+    if (t.opponent_unique_id) s.add(t.opponent_unique_id);
+    wanted.set(t.agency_id, s);
+  }
+  const plan: SocketPlan = { run: new Map(), paused: [], capacity: [] };
+  const queues: { agencyId: string; apiKey: string; uids: string[] }[] = [];
+  for (const agencyId of [...wanted.keys()].sort()) {
+    const uids = [...wanted.get(agencyId)!].sort();
+    const apiKey = keys.get(agencyId);
+    if (!apiKey) { for (const uid of uids) plan.paused.push({ agencyId, uid }); continue; }
+    const ordered = [...uids.filter(u => open.has(slotKey(agencyId, u))), ...uids.filter(u => !open.has(slotKey(agencyId, u)))];
+    const budget = budgets.get(agencyId) ?? Infinity;
+    for (const uid of ordered.slice(budget)) plan.capacity.push({ agencyId, uid });
+    queues.push({ agencyId, apiKey, uids: ordered.slice(0, budget) });
+  }
+  let used = 0;
+  for (let round = 0; used < max; round++) {
+    let progressed = false;
+    for (const q of queues) {
+      const uid = q.uids[round];
+      if (uid === undefined || used >= max) continue;
+      plan.run.set(slotKey(q.agencyId, uid), { agencyId: q.agencyId, uid, apiKey: q.apiKey });
+      used++; progressed = true;
     }
+    if (!progressed) break;
   }
-  for (const e of out.values()) {
-    e.agencyIds.sort();
-    const owner = e.agencyIds.find(a => keys.has(a));
-    e.apiKey = owner ? keys.get(owner)! : null;
-  }
-  return out;
+  for (const q of queues) for (const uid of q.uids) if (!plan.run.has(slotKey(q.agencyId, uid))) plan.capacity.push({ agencyId: q.agencyId, uid });
+  return plan;
 }
+
+const withTimeout = <T>(p: PromiseLike<T>, what: string, ms = DB_TIMEOUT_MS): Promise<T> =>
+  Promise.race([Promise.resolve(p), new Promise<never>((_, rej) => setTimeout(() => rej(new Error(`${what} timed out after ${ms}ms`)), ms).unref())]);
 
 class Supervisor {
   private conns = new Map<string, StreamConnection>();
+  /** Last status written for wanted slots that have no socket (paused / capacity), so we write on change only. */
+  private idle = new Map<string, string>();
   private reconciling = false;
   private again = false;
   private catalog: GiftCatalog = new Map();
+  private capacityAlerted = false;
 
   constructor(private db: SupabaseClient, private gifts: GiftBuffer) {}
 
@@ -218,15 +280,27 @@ class Supervisor {
     log({ msg: 'catalog loaded', gifts: map.size });
   }
 
-  /** API keys of agencies with a live Euler connection, decrypted in memory only. */
-  private async liveKeys(agencyIds: string[]): Promise<Map<string, string>> {
+  /** All active targets, paged: PostgREST caps a response at 1000 rows. */
+  private async loadTargets(): Promise<Target[]> {
+    const out: Target[] = [];
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await withTimeout(
+        this.db.from('tracked_targets').select('agency_id, unique_id, opponent_unique_id').eq('active', true).order('id').range(from, from + 999), 'load targets');
+      if (error) throw error;
+      out.push(...(data ?? []));
+      if (!data || data.length < 1000) return out;
+    }
+  }
+
+  /** API keys of agencies whose key Euler accepted, decrypted in memory only. */
+  private async validKeys(agencyIds: string[]): Promise<Map<string, string>> {
     const keys = new Map<string, string>();
     if (!agencyIds.length) return keys;
-    const { data: conns, error } = await this.db.from('euler_connections').select('agency_id').eq('status', 'connected').in('agency_id', agencyIds);
+    const { data: conns, error } = await withTimeout(this.db.from('euler_connections').select('agency_id').eq('key_status', 'valid').in('agency_id', agencyIds), 'load connections');
     if (error) throw error;
-    const live = (conns ?? []).map(c => c.agency_id);
-    if (!live.length) return keys;
-    const { data: creds, error: e2 } = await this.db.from('euler_credentials').select('agency_id, api_key_enc').in('agency_id', live);
+    const valid = (conns ?? []).map(c => c.agency_id);
+    if (!valid.length) return keys;
+    const { data: creds, error: e2 } = await withTimeout(this.db.from('euler_credentials').select('agency_id, api_key_enc').in('agency_id', valid), 'load credentials');
     if (e2) throw e2;
     for (const c of creds ?? []) {
       if (!c.api_key_enc) continue;
@@ -236,35 +310,50 @@ class Supervisor {
     return keys;
   }
 
-  /** Diff desired set (active tracked_targets + opponents) against open sockets. Safe to call repeatedly. */
+  private async budgets(agencyIds: string[]): Promise<Map<string, number>> {
+    const out = new Map<string, number>();
+    if (!agencyIds.length) return out;
+    const { data, error } = await withTimeout(this.db.from('agencies').select('id, plan').in('id', agencyIds), 'load plans');
+    if (error) throw error;
+    for (const a of data ?? []) out.set(a.id, socketBudget(a.plan));
+    return out;
+  }
+
+  /** Diff the desired (agency, creator) sockets against the open ones. Safe to call repeatedly. */
   async reconcile() {
     if (this.reconciling) { this.again = true; return; }
     this.reconciling = true;
     try {
-      const { data, error } = await this.db.from('tracked_targets').select('agency_id, unique_id, opponent_unique_id').eq('active', true);
-      if (error) throw error;
-      const rows = data ?? [];
-      const want = desiredSockets(rows, await this.liveKeys([...new Set(rows.map(r => r.agency_id))]));
+      const rows = await this.loadTargets();
+      const agencyIds = [...new Set(rows.map(r => r.agency_id))];
+      const [keys, budgets] = await Promise.all([this.validKeys(agencyIds), this.budgets(agencyIds)]);
+      const plan = planSockets(rows, keys, budgets, MAX_SOCKETS, new Set(this.conns.keys()));
 
-      for (const [uid, c] of this.conns) {
-        const w = want.get(uid);
-        if (!w || !w.apiKey) { c.stop(w ? 'paused' : 'stopped'); this.conns.delete(uid); log({ msg: w ? 'paused (no live connection)' : 'untracked', uid }); }
+      for (const [k, c] of this.conns) {
+        if (plan.run.has(k)) continue;
+        const reason = plan.paused.some(p => slotKey(p.agencyId, p.uid) === k) ? 'paused' : plan.capacity.some(p => slotKey(p.agencyId, p.uid) === k) ? 'capacity' : 'stopped';
+        c.stop(reason); this.conns.delete(k);
+        log({ msg: reason === 'stopped' ? 'untracked' : reason, agency: c.agencyId, uid: c.uniqueId });
       }
-      for (const [uid, w] of want) {
-        if (!w.apiKey) { if (!this.conns.has(uid)) await this.markPaused(uid); continue; }
-        let c = this.conns.get(uid);
-        if (!c) {
-          if (this.conns.size >= MAX_SOCKETS) { log({ level: 'warn', msg: 'MAX_SOCKETS reached', skipped: uid }); continue; }
-          c = new StreamConnection(uid, w.apiKey, this.db, this.gifts, () => this.catalog);
-          this.conns.set(uid, c);
-          c.agencyIds = w.agencyIds;
-          await c.start();
-          log({ msg: 'tracked', uid, agencies: w.agencyIds.length });
-        } else {
-          c.agencyIds = w.agencyIds;
-          c.rekey(w.apiKey);
-        }
+      for (const [k, slot] of plan.run) {
+        this.idle.delete(k);
+        const existing = this.conns.get(k);
+        if (existing) { existing.rekey(slot.apiKey); continue; }
+        const c = new StreamConnection(slot.agencyId, slot.uid, slot.apiKey, this.db, this.gifts, () => this.catalog, { onInvalidKey: a => void this.markKeyInvalid(a) });
+        this.conns.set(k, c);
+        await withTimeout(c.start(), 'start socket');
+        log({ msg: 'tracked', agency: slot.agencyId, uid: slot.uid });
       }
+      await this.markIdle(plan.paused, 'paused');
+      await this.markIdle(plan.capacity, 'capacity');
+
+      workerState.sockets = this.conns.size;
+      workerState.maxSockets = MAX_SOCKETS;
+      workerState.lastReconcileAt = Date.now();
+      const pct = this.conns.size / MAX_SOCKETS;
+      if (pct >= 0.8 && !this.capacityAlerted) { this.capacityAlerted = true; log({ level: 'error', msg: 'socket capacity at 80%', sockets: this.conns.size, max: MAX_SOCKETS }); }
+      else if (pct < 0.7) this.capacityAlerted = false;
+      if (plan.capacity.length) log({ level: 'warn', msg: 'targets over capacity', count: plan.capacity.length });
     } catch (e) {
       log({ level: 'error', msg: 'reconcile failed', err: (e as Error).message });
     } finally {
@@ -273,8 +362,22 @@ class Supervisor {
     }
   }
 
-  private async markPaused(uid: string) {
-    await this.db.from('stream_status').upsert({ unique_id: uid, status: 'paused', next_retry_at: null, connected_at: null, updated_at: new Date().toISOString() }, { onConflict: 'unique_id' });
+  /** Writes a status for wanted slots that have no socket, once per change. */
+  private async markIdle(slots: { agencyId: string; uid: string }[], status: 'paused' | 'capacity') {
+    const rows = slots.filter(s => this.idle.get(slotKey(s.agencyId, s.uid)) !== status);
+    if (!rows.length) return;
+    const now = new Date().toISOString();
+    const { error } = await this.db.from('stream_status').upsert(
+      rows.map(s => ({ agency_id: s.agencyId, unique_id: s.uid, status, worker_id: WORKER_ID, next_retry_at: null, connected_at: null, viewer_count: null, updated_at: now })),
+      { onConflict: 'agency_id,unique_id' });
+    if (error) { log({ level: 'warn', msg: 'idle status write failed', status, err: error.message }); return; }
+    for (const s of rows) this.idle.set(slotKey(s.agencyId, s.uid), status);
+  }
+
+  /** Euler rejected the agency's key: record it so the dashboard says so and ingestion stops until a new key is saved. */
+  private async markKeyInvalid(agencyId: string) {
+    const { error } = await this.db.from('euler_connections').update({ key_status: 'invalid', updated_at: new Date().toISOString() }).eq('agency_id', agencyId).eq('key_status', 'valid');
+    if (error) log({ level: 'warn', msg: 'could not flag invalid key', agency: agencyId, err: error.message });
   }
 
   listen() {
@@ -293,6 +396,7 @@ class Supervisor {
 
 export async function main() {
   need('CREDENTIALS_KEY');
+  workerState.expected = true;
   const db = serviceClient();
   const gifts = new GiftBuffer(db);
   const sup = new Supervisor(db, gifts);

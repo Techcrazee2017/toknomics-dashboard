@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { backoff, desiredSockets, policyFor, socketUrl } from '../src/worker';
+import { backoff, planSockets, policyFor, slotKey, socketBudget, socketUrl, type Target } from '../src/worker';
 
 describe('policyFor', () => {
   it('maps Euler close codes', () => {
@@ -22,20 +22,55 @@ describe('backoff', () => {
   });
 });
 
-describe('desiredSockets', () => {
-  const targets = [
-    { agency_id: 'b', unique_id: 'nova_shift', opponent_unique_id: 'lumen.rise' },
-    { agency_id: 'a', unique_id: 'nova_shift', opponent_unique_id: null },
-    { agency_id: 'c', unique_id: 'kairo.dev', opponent_unique_id: null },
-  ];
-  it('opens one socket per creator, including battle opponents', () => {
-    const d = desiredSockets(targets, new Map([['a', 'KA'], ['b', 'KB']]));
-    expect([...d.keys()].sort()).toEqual(['kairo.dev', 'lumen.rise', 'nova_shift']);
-    expect(d.get('nova_shift')).toEqual({ agencyIds: ['a', 'b'], apiKey: 'KA' });
-    expect(d.get('lumen.rise')).toEqual({ agencyIds: ['b'], apiKey: 'KB' });
+describe('planSockets', () => {
+  const t = (agency_id: string, unique_id: string, opponent_unique_id: string | null = null): Target => ({ agency_id, unique_id, opponent_unique_id });
+  const keys = new Map([['a', 'KA'], ['b', 'KB']]);
+  const run = (p: ReturnType<typeof planSockets>) => [...p.run.keys()].sort();
+
+  it('opens one socket per (agency, creator), with that agency\'s own key', () => {
+    const p = planSockets([t('b', 'nova_shift', 'lumen.rise'), t('a', 'nova_shift'), t('c', 'kairo.dev')], keys, new Map(), 100);
+    expect(run(p)).toEqual(['a:nova_shift', 'b:lumen.rise', 'b:nova_shift']);
+    // Both agencies track nova_shift; each socket uses its own agency's key, never the other's.
+    expect(p.run.get('a:nova_shift')?.apiKey).toBe('KA');
+    expect(p.run.get('b:nova_shift')?.apiKey).toBe('KB');
+    expect(p.run.get('b:lumen.rise')?.apiKey).toBe('KB');
   });
-  it('leaves creators without a connected agency keyless (paused)', () => {
-    expect(desiredSockets(targets, new Map()).get('kairo.dev')?.apiKey).toBeNull();
+
+  it('pauses an agency with no accepted key without touching the others', () => {
+    const p = planSockets([t('a', 'x'), t('c', 'kairo.dev')], keys, new Map(), 100);
+    expect(run(p)).toEqual(['a:x']);
+    expect(p.paused).toEqual([{ agencyId: 'c', uid: 'kairo.dev' }]);
+  });
+
+  it('dedupes a creator that is both a target and an opponent of the same agency', () => {
+    expect(run(planSockets([t('a', 'x', 'y'), t('a', 'y')], keys, new Map(), 100))).toEqual(['a:x', 'a:y']);
+  });
+
+  it('caps an agency at its budget and reports the rest as capacity', () => {
+    const p = planSockets([t('a', 'c1'), t('a', 'c2'), t('a', 'c3')], keys, new Map([['a', 2]]), 100);
+    expect(run(p)).toEqual(['a:c1', 'a:c2']);
+    expect(p.capacity).toEqual([{ agencyId: 'a', uid: 'c3' }]);
+  });
+
+  it('shares MAX_SOCKETS round-robin so a large agency cannot starve a small one', () => {
+    const big = Array.from({ length: 10 }, (_, i) => t('a', `a${String(i).padStart(2, '0')}`));
+    const p = planSockets([...big, t('b', 'b00'), t('b', 'b01')], keys, new Map(), 6);
+    expect(p.run.size).toBe(6);
+    expect([...p.run.values()].filter(s => s.agencyId === 'b').length).toBe(2);
+    expect([...p.run.values()].filter(s => s.agencyId === 'a').length).toBe(4);
+    expect(p.capacity.length).toBe(6);
+    expect(new Set([...run(p), ...p.capacity.map(c => slotKey(c.agencyId, c.uid))]).size).toBe(12);
+  });
+
+  it('keeps sockets that are already open when the cap bites', () => {
+    const targets = ['c1', 'c2', 'c3'].map(u => t('a', u));
+    const p = planSockets(targets, keys, new Map([['a', 2]]), 100, new Set([slotKey('a', 'c3')]));
+    expect(run(p)).toEqual(['a:c1', 'a:c3'].sort());
+  });
+
+  it('derives the per-agency budget from the plan roster limit', () => {
+    expect(socketBudget('starter')).toBe(20);
+    expect(socketBudget('scale')).toBe(300);
   });
 });
 
@@ -54,10 +89,10 @@ describe('StreamConnection status writes', () => {
     const { StreamConnection } = await import('../src/worker');
     const writes: Record<string, unknown>[] = [];
     const db = { from: () => ({ upsert: async (row: Record<string, unknown>) => { writes.push(row); return { error: null }; } }) };
-    const c = new StreamConnection('nova_shift', 'k', db as never, {} as never, () => new Map());
+    const c = new StreamConnection('agency-1', 'nova_shift', 'k', db as never, {} as never, () => new Map());
     const set = (c as unknown as { setStatus: (p: Record<string, unknown>) => Promise<void> }).setStatus.bind(c);
     await set({ status: 'live' });
     await set({ room_id: '7400', viewer_count: 12 });
-    expect(writes[1]).toMatchObject({ status: 'live', room_id: '7400', viewer_count: 12 });
+    expect(writes[1]).toMatchObject({ agency_id: 'agency-1', unique_id: 'nova_shift', status: 'live', room_id: '7400', viewer_count: 12 });
   });
 });

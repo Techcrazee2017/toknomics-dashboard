@@ -24,7 +24,8 @@ export function workerLine(st: StreamStatus | undefined, now: number): { text: s
     case 'backoff': return { text: `Reconnecting after ${st.close_code ?? ''} ${closeName(st.close_code)}${retry}`, tone: 'wait', icon: 'ph ph-arrows-clockwise' };
     case 'auth_error': return { text: `Euler rejected the API key (${st.close_code})${retry}`, tone: 'err', icon: 'ph ph-warning' };
     case 'invalid': return { text: `TikTok rejected this handle (4400 INVALID_OPTIONS)`, tone: 'err', icon: 'ph ph-warning' };
-    case 'paused': return { text: 'Paused · Euler Stream is disconnected', tone: 'wait', icon: 'ph ph-pause' };
+    case 'paused': return { text: 'Paused · add a valid Euler API key', tone: 'wait', icon: 'ph ph-pause' };
+    case 'capacity': return { text: 'Not tracked · over your plan\'s live-socket limit', tone: 'err', icon: 'ph ph-warning' };
     default: return { text: 'Stopped', tone: 'wait', icon: 'ph ph-stop' };
   }
 }
@@ -86,7 +87,7 @@ export function LiveTargets() {
                 </div>
                 {!live && (
                   <div className="tn-panel">
-                    <span style={{ color: 'var(--color-neutral-300)' }}>{st?.status === 'paused' ? 'Reconnect Euler Stream on Data source to resume.' : 'Offline. Tracking starts when they go live.'}</span>
+                    <span style={{ color: 'var(--color-neutral-300)' }}>{st?.status === 'paused' ? 'Add a valid Euler API key on Data source to resume.' : st?.status === 'capacity' ? 'Stop tracking another creator or opponent, or move up a plan, to free a live socket.' : 'Offline. Tracking starts when they go live.'}</span>
                     <button className="btn btn-secondary" style={{ alignSelf: 'flex-start' }} onClick={() => void recheck(t)}><i className="ph ph-arrows-clockwise" />Check again</button>
                   </div>
                 )}
@@ -158,7 +159,7 @@ function Discover() {
   const [region, setRegion] = useState<(typeof FEED_REGIONS)[number]>('US');
   const [n, setN] = useState(0);
   const feed = useQuery({
-    queryKey: ['live-feed', agency.id, region, n], enabled: conn.data?.status === 'connected', staleTime: 60_000, retry: false,
+    queryKey: ['live-feed', agency.id, region, n], enabled: conn.data?.key_status === 'valid', staleTime: 60_000, retry: false,
     queryFn: () => api.tool(agency.id, 'get_live_feed', { region }),
   });
   const tracked = new Set((targets.data ?? []).map(t => t.unique_id));
@@ -179,7 +180,7 @@ function Discover() {
           <button className="btn btn-secondary btn-icon" style={{ width: 30, height: 30 }} onClick={() => setN(x => x + 1)} title="New sample" aria-label="New sample"><i className="ph ph-arrows-clockwise" /></button>
         </div>
       </div>
-      {conn.data?.status !== 'connected' && <div style={{ color: 'var(--color-neutral-400)', padding: 'var(--space-3) 0' }}>Connect Euler Stream on Data source to sample live rooms.</div>}
+      {conn.data?.key_status !== 'valid' && <div style={{ color: 'var(--color-neutral-400)', padding: 'var(--space-3) 0' }}>Add your Euler API key on Data source to sample live rooms.</div>}
       {feed.isFetching && <div style={{ color: 'var(--color-neutral-500)', padding: 'var(--space-3) 0' }}>Sampling live rooms…</div>}
       {feed.error && <div style={{ color: 'var(--color-neutral-400)', padding: 'var(--space-3) 0' }}>{(feed.error as Error).message}</div>}
       {feed.data && !feed.isFetching && (

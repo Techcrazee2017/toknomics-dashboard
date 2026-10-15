@@ -14,7 +14,7 @@ export function Rankings() {
   const conn = useConnection(agency.id);
   const creators = useCreators(agency.id);
   const targets = useTargets(agency.id);
-  const connected = conn.data?.status === 'connected';
+  const connected = conn.data?.key_status === 'valid';
   const [region, setRegion] = useState('US');
   const [rank, setRank] = useState<RankName>('DAILY_RANK');
   const [league, setLeague] = useState<(typeof LEAGUES)[number]>('A1');

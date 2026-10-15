@@ -10,6 +10,9 @@ export type Connection = {
   agency_id: string; mode: 'oauth' | 'cookie'; host: string; status: 'disconnected' | 'authorizing' | 'connected';
   api_key_last4: string | null; has_cookie: boolean; pinned_user_id: string | null; account_label: string | null;
   euler_account_id: number | null; connected_at: string | null;
+  /** Whether Euler accepted the stored API key. Live ingestion and read-only tools need only this. */
+  key_status: 'unknown' | 'valid' | 'invalid';
+  cookie_ack_at: string | null;
 };
 type Credentials = {
   api_key_enc: string | null; cookie_enc: string | null; oauth_access_enc: string | null;
@@ -24,12 +27,22 @@ export type EulerSession = {
   cookie?: string;
 };
 
+/**
+ * Every call has a 10s timeout. baseOptions deliberately omits the SDK's default `validateStatus: () => true`:
+ * with it, a 401/429/500 resolves like a success and callers would read an error body as data. Without it, axios
+ * throws on non-2xx and eulerError() maps the status.
+ */
 export const makeClient = (apiKey: string) =>
-  new EulerStreamApiClient({ apiKey, ...(optional('EULER_API_BASE') ? { basePath: optional('EULER_API_BASE') } : {}) });
+  new EulerStreamApiClient({
+    apiKey, baseOptions: { timeout: 10_000 },
+    ...(optional('EULER_API_BASE') ? { basePath: optional('EULER_API_BASE') } : {}),
+  });
+export type ClientFactory = typeof makeClient;
 
 /** Axios errors from the SDK carry Euler's message in response.data; surface that, never the request config. */
 export function eulerError(e: unknown): HttpError {
-  const ax = e as { response?: { status?: number; data?: { message?: string; error?: string } }; message?: string };
+  const ax = e as { code?: string; response?: { status?: number; data?: { message?: string; error?: string } }; message?: string };
+  if (ax.code === 'ECONNABORTED' || ax.code === 'ETIMEDOUT') return new HttpError(502, 'Euler Stream did not respond in time. Try again.', 'euler_timeout');
   const status = ax.response?.status;
   const msg = ax.response?.data?.message ?? ax.response?.data?.error ?? ax.message ?? 'Euler Stream request failed';
   if (status === 401 || status === 403) return new HttpError(502, `Euler rejected the credentials: ${msg}`, 'euler_auth');
@@ -41,7 +54,7 @@ export function eulerError(e: unknown): HttpError {
 export class EulerService {
   private secCache = new Map<string, { v: string; exp: number }>();
 
-  constructor(private db: SupabaseClient) {}
+  constructor(private db: SupabaseClient, private make: ClientFactory = makeClient) {}
 
   async connection(agencyId: string): Promise<Connection> {
     const { data, error } = await this.db.from('euler_connections').select('*').eq('agency_id', agencyId).maybeSingle();
@@ -65,14 +78,19 @@ export class EulerService {
     return open(cr.api_key_enc, agencyId);
   }
 
-  /** Session for a tool call. Requires a live connection, like the dashboard's status bar implies. */
+  /**
+   * Session for a tool call. Read-only calls need only an API key Euler accepted. Calls that act on a room
+   * (needsAuth) also need the OAuth / cookie moderation session, which is optional for an agency.
+   */
   async session(agencyId: string, needsAuth: boolean): Promise<EulerSession> {
     const conn = await this.connection(agencyId);
-    if (conn.status !== 'connected') throw new HttpError(409, 'Not connected to Euler Stream', 'not_connected');
+    if (conn.key_status === 'invalid') throw new HttpError(409, 'Euler rejected the saved API key. Paste a new one on Data source.', 'invalid_api_key');
+    if (conn.key_status !== 'valid') throw new HttpError(409, 'Add your Euler API key on Data source first', 'no_api_key');
     const cr = await this.credentials(agencyId);
-    if (!cr.api_key_enc) throw new HttpError(409, 'Add an Euler API key on Data source first', 'no_api_key');
-    const s: EulerSession = { client: makeClient(open(cr.api_key_enc, agencyId)), conn };
+    if (!cr.api_key_enc) throw new HttpError(409, 'Add your Euler API key on Data source first', 'no_api_key');
+    const s: EulerSession = { client: this.make(open(cr.api_key_enc, agencyId)), conn };
     if (!needsAuth) return s;
+    if (conn.status !== 'connected') throw new HttpError(409, 'Room moderation needs an OAuth or cookie session. Connect one on Data source.', 'not_connected');
     if (conn.mode === 'cookie') {
       if (!cr.cookie_enc) throw new HttpError(409, 'Cookie mode needs an x-cookie-header on Data source', 'no_cookie');
       s.cookie = open(cr.cookie_enc, agencyId);
