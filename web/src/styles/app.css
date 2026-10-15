@@ -120,6 +120,45 @@ select.input { appearance: none; padding-right: 28px; background-image: linear-g
 /* ── auth ── */
 .tn-auth { min-height: 100vh; display: grid; place-items: center; padding: var(--space-8); }
 .tn-auth .card { width: min(400px, 100%); padding: var(--space-8); gap: var(--space-6); }
+.tn-auth-legal { margin: 0; font-size: 12px; color: var(--color-neutral-500); }
+
+/* ── public site (landing, pricing, legal) ── */
+.tn-pub { min-height: 100vh; display: flex; flex-direction: column; position: relative; }
+.tn-pub-nav, .tn-pub-main, .tn-pub-foot { width: 100%; max-width: 1120px; margin: 0 auto; box-sizing: border-box; padding-inline: 32px; position: relative; }
+.tn-pub-nav { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-block: 20px; }
+.tn-pub-brand { font-family: var(--font-heading); font-weight: 600; font-size: 19px; letter-spacing: -0.01em; color: var(--color-text); text-decoration: none; }
+.tn-pub-brand:hover { color: var(--color-text); }
+.tn-pub-links { display: flex; align-items: center; gap: 8px; }
+.tn-pub-links .btn, .tn-pub-cta .btn, .tn-pub-plans .btn { text-decoration: none; }
+.tn-pub-main { flex: 1; display: flex; flex-direction: column; gap: 72px; padding-block: 40px 72px; }
+.tn-pub-hero { display: flex; flex-direction: column; gap: 14px; max-width: 760px; }
+.tn-pub-hero h1 { margin: 0; font-size: clamp(32px, 5vw, 48px); line-height: 1.1; letter-spacing: -0.02em; }
+.tn-pub-hero p { margin: 0; font-size: 17px; color: var(--color-neutral-300); max-width: 62ch; }
+.tn-pub-cta { margin-top: 8px; flex-wrap: wrap; }
+.tn-pub-section { display: flex; flex-direction: column; gap: 20px; }
+.tn-pub-section h2 { margin: 0; font-size: 26px; letter-spacing: -0.015em; }
+.tn-pub-lede { margin: -8px 0 0; color: var(--color-neutral-400); }
+.tn-pub-note { margin: 0; font-size: 13px; color: var(--color-neutral-500); }
+.tn-pub-features { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: var(--space-6); }
+.tn-pub-steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: var(--space-6); list-style: none; margin: 0; padding: 0; }
+.tn-pub-plans { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: var(--space-6); }
+.tn-pub-faq { display: flex; flex-direction: column; gap: 10px; max-width: 820px; }
+.tn-pub-faq summary { cursor: pointer; font-weight: 500; }
+.tn-pub-faq p { margin: 10px 0 0; color: var(--color-neutral-300); }
+.tn-pub-foot { display: flex; flex-direction: column; gap: 10px; padding-block: 28px 40px; border-top: 1px solid var(--color-divider); font-size: 13px; color: var(--color-neutral-500); }
+.tn-pub-foot p { margin: 0; }
+.tn-pub-foot-links { display: flex; flex-wrap: wrap; gap: 8px 20px; }
+.tn-legal { max-width: 760px; display: flex; flex-direction: column; gap: 4px; }
+.tn-legal h1 { margin: 0; font-size: 34px; letter-spacing: -0.02em; }
+.tn-legal h2 { margin: 24px 0 4px; font-size: 19px; }
+.tn-legal p, .tn-legal li { color: var(--color-neutral-300); }
+.tn-legal p { margin: 6px 0; }
+.tn-legal ul { margin: 6px 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
+.tn-legal-meta { color: var(--color-neutral-500) !important; font-size: 13px; }
+@media (max-width: 760px) {
+  .tn-pub-nav, .tn-pub-main, .tn-pub-foot { padding-inline: 16px; }
+  .tn-pub-main { gap: 56px; padding-block: 24px 56px; }
+}
 
 @media (max-width: 760px) {
   .tn-app { flex-direction: column; }

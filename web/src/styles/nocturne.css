@@ -1,5 +1,6 @@
 /* Nocturne design system — copied verbatim from project/_ds/nocturne-7bd1827e-…/styles.css. Retune tokens there, then re-copy. */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+/* Inter is self-hosted (@fontsource/inter, imported in main.tsx) instead of this file's Google Fonts @import,
+   so visitors' browsers don't contact Google and the CSP stays first-party. Drop the @import when re-copying. */
 
 :root {
   --color-bg: #161826;

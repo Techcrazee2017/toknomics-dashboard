@@ -1,0 +1,10 @@
+User-agent: *
+Disallow: /overview
+Disallow: /ledger
+Disallow: /roster
+Disallow: /targets
+Disallow: /rankings
+Disallow: /team
+Disallow: /source
+Disallow: /billing
+Disallow: /login

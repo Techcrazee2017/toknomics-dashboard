@@ -4,8 +4,23 @@
   "buildCommand": "npm run build -w web",
   "outputDirectory": "web/dist",
   "framework": "vite",
+  "redirects": [
+    { "source": "/:path*", "has": [{ "type": "host", "value": "toknomics-woad.vercel.app" }], "destination": "https://toknomics.backwoodstechsolutions.com/:path*", "permanent": true },
+    { "source": "/:path*", "has": [{ "type": "host", "value": "toknomics-backwoodstechsolutions.vercel.app" }], "destination": "https://toknomics.backwoodstechsolutions.com/:path*", "permanent": true },
+    { "source": "/:path*", "has": [{ "type": "host", "value": "toknomics-git-main-backwoodstechsolutions.vercel.app" }], "destination": "https://toknomics.backwoodstechsolutions.com/:path*", "permanent": true }
+  ],
   "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }],
   "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "Content-Security-Policy", "value": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: https:; connect-src 'self' https://uacgridhakonnihwryew.supabase.co wss://uacgridhakonnihwryew.supabase.co https://api.toknomics.backwoodstechsolutions.com wss://ws.eulerstream.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'" },
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "X-Frame-Options", "value": "DENY" },
+        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
+        { "key": "Permissions-Policy", "value": "camera=(), microphone=(), geolocation=(), payment=(), usb=()" }
+      ]
+    },
     { "source": "/assets/(.*)", "headers": [{ "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }] }
   ]
 }
