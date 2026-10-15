@@ -296,11 +296,12 @@ export async function main() {
   const db = serviceClient();
   const gifts = new GiftBuffer(db);
   const sup = new Supervisor(db, gifts);
-  await sup.loadCatalog();
-  await sup.reconcile();
-  sup.listen();
 
+  // Registered before the first await so a SIGTERM during boot (e.g. a redeploy) still flushes buffered gifts.
+  let stopping = false;
   const shutdown = async (sig: string) => {
+    if (stopping) return;
+    stopping = true;
     log({ msg: 'shutdown', sig });
     sup.stopAll();
     await gifts.close();
@@ -308,6 +309,10 @@ export async function main() {
   };
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
   process.on('SIGINT', () => void shutdown('SIGINT'));
+
+  await sup.loadCatalog();
+  await sup.reconcile();
+  sup.listen();
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main().catch(e => { console.error(e); process.exit(1); });
