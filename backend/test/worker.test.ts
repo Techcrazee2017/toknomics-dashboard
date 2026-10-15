@@ -180,13 +180,15 @@ describe('StreamConnection.start', () => {
       expect(connect).toHaveBeenCalledTimes(1);
     } finally { vi.useRealTimers(); }
   });
-  it('still opens the socket when the ownership claim hangs', async () => {
+  it('still opens the socket when the ownership claim hangs, and aborts the stale request', async () => {
     vi.useFakeTimers();
     try {
       const { StreamConnection } = await import('../src/worker');
+      let signal: AbortSignal | undefined;
+      const hung = { abortSignal: (s: AbortSignal) => { signal = s; return hung; }, then: () => {} }; // never settles
       const db = { from: () => ({
         select: () => ({ eq: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null }) }) }) }),
-        upsert: () => new Promise(() => {}), // the claim never settles
+        upsert: () => hung,
       }) };
       const c = new StreamConnection('agency-1', 'nova_shift', 'k', db as never, {} as never, () => new Map());
       const connect = vi.spyOn(c as unknown as { connect: () => void }, 'connect').mockImplementation(() => {});
@@ -194,6 +196,9 @@ describe('StreamConnection.start', () => {
       await vi.advanceTimersByTimeAsync(20_001);
       await started;
       expect(connect).toHaveBeenCalledTimes(1);
+      // A claim that timed out must not be able to land later and retake the row from a newer process.
+      expect(signal).toBeDefined();
+      expect(signal!.aborted).toBe(true);
     } finally { vi.useRealTimers(); }
   });
   it('does not connect if it was stopped while the lookup was pending', async () => {
@@ -211,5 +216,72 @@ describe('StreamConnection.start', () => {
     expect(connect).toHaveBeenCalledTimes(1);
     // connect() itself returns early when stopped: no socket is opened.
     expect((c as unknown as { ws?: unknown }).ws).toBeUndefined();
+  });
+});
+
+describe('Supervisor', () => {
+  const ids = (n: number) => Array.from({ length: n }, (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`);
+
+  it('looks agencies up in bounded chunks, so none is dropped past the row cap or the URL limit', async () => {
+    const { Supervisor } = await import('../src/worker');
+    const all = ids(250), seen: number[] = [];
+    const db = { from: (table: string) => ({ select: () => ({
+      eq: () => ({ in: (_c: string, v: string[]) => { seen.push(v.length); return Promise.resolve({ data: v.map(id => ({ agency_id: id })), error: null }); } }),
+      in: (_c: string, v: string[]) => { seen.push(v.length); return Promise.resolve({ data: table === 'agencies' ? v.map(id => ({ id, plan: 'starter' })) : [], error: null }); },
+    }) }) };
+    const sup = new Supervisor(db as never, {} as never) as unknown as { budgets: (a: string[]) => Promise<Map<string, number>>; validKeys: (a: string[]) => Promise<Map<string, string>> };
+    const budgets = await sup.budgets(all);
+    expect(budgets.size).toBe(250);                  // every agency got its plan, none defaulted to unlimited
+    await sup.validKeys(all);
+    expect(Math.max(...seen)).toBeLessThanOrEqual(100);
+    expect(seen.length).toBeGreaterThan(2);
+  });
+
+  describe('idle status writes', () => {
+    /** Records the writes markIdle makes. `failUpdate` makes the fenced update fail. */
+    function idleDb(failUpdate = false) {
+      const calls: { op: string; rows?: unknown; patch?: Record<string, unknown>; opts?: Record<string, unknown>; filters: [string, unknown][] }[] = [];
+      const db = { from: () => ({
+        upsert: async (rows: unknown, opts: Record<string, unknown>) => { calls.push({ op: 'upsert', rows, opts, filters: [] }); return { error: null }; },
+        update: (patch: Record<string, unknown>) => {
+          const c = { op: 'update', patch, filters: [] as [string, unknown][] }; calls.push(c);
+          const q: any = { eq: (k: string, v: unknown) => { c.filters.push([k, v]); return q; }, in: (k: string, v: unknown) => { c.filters.push([k, v]); return q; },
+            or: async (f: string) => { c.filters.push(['or', f]); return { error: failUpdate ? { message: 'down' } : null }; } };
+          return q;
+        },
+      }) };
+      return { db: db as never, calls };
+    }
+
+    it('creates missing rows without overwriting, then updates only rows this process owns or whose owner went quiet', async () => {
+      const { Supervisor } = await import('../src/worker');
+      const { db, calls } = idleDb();
+      const sup = new Supervisor(db, {} as never) as unknown as { markIdle: (s: { agencyId: string; uid: string }[], st: 'paused' | 'capacity') => Promise<void> };
+      await sup.markIdle([{ agencyId: 'a', uid: 'x' }, { agencyId: 'a', uid: 'y' }, { agencyId: 'b', uid: 'z' }], 'capacity');
+      expect(calls[0]).toMatchObject({ op: 'upsert', opts: { ignoreDuplicates: true } });   // never takes an existing row
+      const updates = calls.filter(c => c.op === 'update');
+      expect(updates).toHaveLength(2);                                                      // one per agency
+      const workerId = (calls[0]!.rows as { worker_id: string }[])[0]!.worker_id;
+      for (const u of updates) {
+        const or = String(u.filters.find(f => f[0] === 'or')![1]);
+        expect(or).toContain(`worker_id.eq.${workerId}`);                                   // rows it owns...
+        expect(or).toMatch(/updated_at\.lt\.\d{4}-\d\d-\d\dT/);                             // ...or whose owner stopped writing
+      }
+    });
+
+    it('does not record a slot as written when the update fails, so it is retried', async () => {
+      const { Supervisor } = await import('../src/worker');
+      const bad = idleDb(true);
+      const sup = new Supervisor(bad.db, {} as never) as unknown as { markIdle: (s: { agencyId: string; uid: string }[], st: 'paused') => Promise<void>; idle: Map<string, string> };
+      await sup.markIdle([{ agencyId: 'a', uid: 'x' }], 'paused');
+      expect(sup.idle.size).toBe(0);
+      const good = idleDb();
+      const sup2 = new Supervisor(good.db, {} as never) as unknown as typeof sup;
+      await sup2.markIdle([{ agencyId: 'a', uid: 'x' }], 'paused');
+      expect(sup2.idle.get('a:x')).toBe('paused');
+      const n = good.calls.length;
+      await sup2.markIdle([{ agencyId: 'a', uid: 'x' }], 'paused');
+      expect(good.calls.length).toBe(n);                                                    // unchanged: no repeat write
+    });
   });
 });
