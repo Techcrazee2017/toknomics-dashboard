@@ -70,7 +70,7 @@ const withTimeout = <T>(p: PromiseLike<T>, what: string, ms = DB_TIMEOUT_MS): Pr
 
 export type StreamHooks = {
   /** Euler closed with 4401: the agency's key is no longer accepted. */
-  onInvalidKey?: (agencyId: string) => void;
+  onInvalidKey?: (agencyId: string, rejectedKey: string) => void;
 };
 
 export class StreamConnection {
@@ -195,7 +195,7 @@ export class StreamConnection {
       const delay = backoff(this.attempts++, p.minDelay);
       log({ level: code === C.INVALID_AUTH || code === C.NO_PERMISSION ? 'error' : 'info', msg: 'closed, retrying', agency: this.agencyId, uid: this.uniqueId, code, why, delay });
       void this.setStatus({ status: p.status, close_code: code, last_error: why ?? null, connected_at: null, viewer_count: p.status === 'offline' ? null : this.viewers, next_retry_at: new Date(Date.now() + delay).toISOString() });
-      if (code === C.INVALID_AUTH) this.hooks.onInvalidKey?.(this.agencyId);
+      if (code === C.INVALID_AUTH) this.hooks.onInvalidKey?.(this.agencyId, this.apiKey);
       this.retryTimer = setTimeout(() => this.connect(), delay);
     });
   }
@@ -305,19 +305,36 @@ export function planSockets(
     queues.push({ agencyId, apiKey, groups: admittedGroups });
   }
 
+  // Pass 1 guarantees every agency an equal share of `max`, counted in sockets, using the groups that fit inside it. The shares
+  // sum to at most `max`, so this pass always fits. Pass 2 hands the spare sockets out round-robin, so a large group is only ever
+  // admitted from what is left over and can't starve a smaller tenant.
   let used = 0;
+  const admit = (q: (typeof queues)[number], group: string[]) => {
+    for (const uid of group) plan.run.set(slotKey(q.agencyId, uid), { agencyId: q.agencyId, uid, apiKey: q.apiKey });
+    used += group.length;
+  };
+  const taken = new Map<(typeof queues)[number], Set<string[]>>(queues.map(q => [q, new Set()]));
+  const fair = queues.length ? Math.floor(max / queues.length) : 0;
+  for (const q of queues) {
+    let mine = 0;
+    for (const group of q.groups) {
+      if (mine + group.length > fair) continue;
+      admit(q, group); taken.get(q)!.add(group); mine += group.length;
+    }
+  }
   for (let round = 0; ; round++) {
     let more = false;
     for (const q of queues) {
-      const group = q.groups[round];
+      const pending = q.groups.filter(g => !taken.get(q)!.has(g));
+      const group = pending[round];
       if (!group) continue;
       more = true;
-      if (used + group.length > max) { for (const uid of group) spill.push({ agencyId: q.agencyId, uid }); continue; }
-      for (const uid of group) plan.run.set(slotKey(q.agencyId, uid), { agencyId: q.agencyId, uid, apiKey: q.apiKey });
-      used += group.length;
+      if (used + group.length > max) continue;
+      admit(q, group); taken.get(q)!.add(group);
     }
     if (!more) break;
   }
+  for (const q of queues) for (const group of q.groups) if (!taken.get(q)!.has(group)) for (const uid of group) spill.push({ agencyId: q.agencyId, uid });
   // A creator can sit in an admitted unit and a rejected one (a shared opponent): it runs, so it is not over capacity.
   const seen = new Set<string>();
   for (const x of spill) {
@@ -415,7 +432,7 @@ export class Supervisor {
         this.idle.delete(k);
         const existing = this.conns.get(k);
         if (existing) { existing.rekey(slot.apiKey); continue; }
-        const c = new StreamConnection(slot.agencyId, slot.uid, slot.apiKey, this.db, this.gifts, () => this.catalog, { onInvalidKey: a => void this.markKeyInvalid(a) });
+        const c = new StreamConnection(slot.agencyId, slot.uid, slot.apiKey, this.db, this.gifts, () => this.catalog, { onInvalidKey: (a, key) => void this.markKeyInvalid(a, key) });
         this.conns.set(k, c);
         try { await c.start(); }
         catch (e) {
@@ -471,8 +488,10 @@ export class Supervisor {
   }
 
   /** Euler rejected the agency's key: record it so the dashboard says so and ingestion stops until a new key is saved. */
-  private async markKeyInvalid(agencyId: string) {
-    const { error } = await this.db.from('euler_connections').update({ key_status: 'invalid', updated_at: new Date().toISOString() }).eq('agency_id', agencyId).eq('key_status', 'valid');
+  private async markKeyInvalid(agencyId: string, rejectedKey: string) {
+    // Only if the key Euler rejected is still the stored one: a late 4401 from an old socket must not invalidate a replacement.
+    const { error } = await this.db.from('euler_connections').update({ key_status: 'invalid', updated_at: new Date().toISOString() })
+      .eq('agency_id', agencyId).eq('key_status', 'valid').eq('api_key_last4', rejectedKey.slice(-4));
     if (error) log({ level: 'warn', msg: 'could not flag invalid key', agency: agencyId, err: error.message });
   }
 

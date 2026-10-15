@@ -147,6 +147,16 @@ describe('API auth & roles', () => {
     const mgr = app({ m: 'manager' }, euler({ mode: 'cookie', has_cookie: true }), goodClient);
     expect((await req(mgr.app, 'PUT', `/api/agencies/${AGENCY}/euler`, 'm', { cookieRisk: true })).status).toBe(403);
   });
+  it('does not invalidate a replacement key when a late test of the old key returns 401', async () => {
+    const rejecting = { accounts: { getRateLimits: async () => { throw { response: { status: 401, data: { message: 'Invalid API key' } } }; } } };
+    const { app: a, log } = app({ f: 'founder' }, euler({ key_status: 'valid', api_key_last4: '3456' }), rejecting);
+    const r = await req(a, 'POST', `/api/agencies/${AGENCY}/euler/test`, 'f');
+    expect(r.status).toBe(502);
+    const eqs = log.filter(o => o.table === 'euler_connections' && o.method === 'eq').map(o => o.args as [string, unknown]);
+    // The invalidation is conditional on the tested key's last4, so a replacement (different last4) is untouched.
+    expect(eqs).toContainEqual(['api_key_last4', '3456']);
+    expect(log.some(o => o.table === 'euler_connections' && o.method === 'update' && (o.args[0] as Record<string, unknown>).key_status === 'invalid')).toBe(true);
+  });
   it('lets only Founders delete Euler credentials, and wipes everything', async () => {
     const mgr = app({ m: 'manager' }, euler({}), goodClient);
     expect((await req(mgr.app, 'POST', `/api/agencies/${AGENCY}/euler/credentials/delete`, 'm')).status).toBe(403);

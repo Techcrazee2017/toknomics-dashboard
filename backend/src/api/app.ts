@@ -228,7 +228,8 @@ export function createApp(db: SupabaseClient, cfg: AppConfig, stripe: Stripe | n
     } catch (e) {
       const err = eulerError(e);
       // Euler no longer accepts the key: record it so the dashboard says so and ingestion pauses.
-      if (err.code === 'euler_auth') await db.from('euler_connections').update({ key_status: 'invalid', updated_at: now() }).eq('agency_id', aid);
+      // Only if the key that was tested is still the stored one: a late 401 must not invalidate a replacement saved meanwhile.
+      if (err.code === 'euler_auth' && s.conn.api_key_last4) await db.from('euler_connections').update({ key_status: 'invalid', updated_at: now() }).eq('agency_id', aid).eq('api_key_last4', s.conn.api_key_last4);
       throw err;
     }
     const ms = Date.now() - t0;

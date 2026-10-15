@@ -102,6 +102,23 @@ describe('planSockets', () => {
     expect(p.capacity.map(c => c.uid).sort()).toEqual(['c1', 'c2', 'shared']);
   });
 
+  it('guarantees each agency a fair share of sockets, so one large connected group cannot starve a small tenant', () => {
+    // Agency a: six creators sharing one opponent = a single 7-socket group. Agency b: two singles. Cap 8, fair share 4.
+    const big = ['c1', 'c2', 'c3', 'c4', 'c5', 'c6'].map(c => t('a', c, 'shared'));
+    const p = planSockets([...big, t('b', 'b1'), t('b', 'b2')], keys, new Map(), 8);
+    // Whole-group round-robin would admit a's group (7 of 8) first and push b to capacity.
+    expect(run(p).filter(k => k.startsWith('b:'))).toEqual(['b:b1', 'b:b2']);
+    expect(run(p).filter(k => k.startsWith('a:'))).toEqual([]);   // 7 > what is left (6): over capacity, whole
+    expect(p.capacity.filter(c => c.agencyId === 'a')).toHaveLength(7);
+  });
+
+  it('still admits a large group from the spare sockets once everyone has their share', () => {
+    const big = ['c1', 'c2', 'c3', 'c4', 'c5', 'c6'].map(c => t('a', c, 'shared'));
+    const p = planSockets([...big, t('b', 'b1')], keys, new Map(), 12);
+    expect(p.run.size).toBe(8);                                   // a's 7-socket group + b1, all fit
+    expect(p.capacity).toEqual([]);
+  });
+
   it('derives the per-agency budget from the plan roster limit', () => {
     expect(socketBudget('starter')).toBe(20);
     expect(socketBudget('scale')).toBe(300);
@@ -235,6 +252,19 @@ describe('Supervisor', () => {
     await sup.validKeys(all);
     expect(Math.max(...seen)).toBeLessThanOrEqual(100);
     expect(seen.length).toBeGreaterThan(2);
+  });
+
+  it('only invalidates a key if the rejected key is still the stored one', async () => {
+    const { Supervisor } = await import('../src/worker');
+    const filters: [string, unknown][] = [];
+    const q: any = { eq: (k: string, v: unknown) => { filters.push([k, v]); return q; }, then: (r: (v: unknown) => void) => r({ error: null }) };
+    const db = { from: () => ({ update: () => q }) };
+    const sup = new Supervisor(db as never, {} as never) as unknown as { markKeyInvalid: (a: string, key: string) => Promise<void> };
+    await sup.markKeyInvalid('agency-1', 'euler_live_old_key_3456');
+    // A replacement saved meanwhile has a different key; the compare-and-set on the stored last4 leaves it alone.
+    expect(filters).toContainEqual(['api_key_last4', '3456']);
+    expect(filters).toContainEqual(['key_status', 'valid']);
+    expect(filters).toContainEqual(['agency_id', 'agency-1']);
   });
 
   describe('idle status writes', () => {
