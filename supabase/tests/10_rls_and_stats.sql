@@ -24,6 +24,8 @@ begin
   if not ok then raise exception 'FAIL %', label; end if;
   raise notice 'PASS %', label;
 end $$;
+-- New functions aren't executable by PUBLIC (0003), and these run after `set role authenticated`.
+grant execute on function pg_temp.as_user(uuid), pg_temp.expect_denied(text, text), pg_temp.expect(boolean, text) to public;
 
 -- ── fixtures (superuser) ──
 insert into auth.users (id, email) values

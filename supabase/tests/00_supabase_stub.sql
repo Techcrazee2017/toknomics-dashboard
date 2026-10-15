@@ -14,7 +14,7 @@ $$;
 grant usage on schema auth to anon, authenticated, service_role;
 grant execute on function auth.uid() to anon, authenticated;
 grant usage on schema public to anon, authenticated, service_role;
-alter default privileges in schema public grant all on tables to anon, authenticated, service_role;
-alter default privileges in schema public grant all on sequences to anon, authenticated, service_role;
-alter default privileges in schema public grant execute on functions to anon, authenticated, service_role;
+-- Same defaults as the hosted project: new tables give the API roles no data privileges, and functions stay
+-- executable by PUBLIC. Migrations must grant what the app needs, so the tests catch a missing grant.
+alter default privileges in schema public grant references, trigger, truncate on tables to anon, authenticated, service_role;
 create publication supabase_realtime;
