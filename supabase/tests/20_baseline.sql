@@ -38,6 +38,15 @@ select pg_temp.expect(not has_table_privilege('authenticated', 'public.agencies'
   and has_column_privilege('authenticated', 'public.agencies', 'agency_cut_pct', 'update'),
   'agencies: only the settings columns are client-writable');
 
+-- 0004: rows in these tables are only inserted and deleted by the dashboard; UPDATE allowed moving creators
+-- between agencies past the plan's creator limit.
+select pg_temp.expect(not bool_or(has_any_column_privilege('authenticated', t::regclass, 'update'))
+    and bool_and(has_table_privilege('authenticated', t::regclass, 'insert') and has_table_privilege('authenticated', t::regclass, 'delete')),
+  'creators/teams/agency_accounts: insert and delete only')
+from unnest(array['creators', 'teams', 'agency_accounts']) t;
+
+select pg_temp.expect(has_table_privilege('authenticated', 'public.gift_purposes', 'update'), 'gift_purposes keeps UPDATE for the tagging upsert');
+
 select pg_temp.expect(has_column_privilege('authenticated', 'public.tracked_targets', 'opponent_unique_id', 'insert')
   and not has_column_privilege('authenticated', 'public.tracked_targets', 'created_by', 'insert')
   and not has_column_privilege('authenticated', 'public.profiles', 'email', 'update'),
@@ -68,7 +77,8 @@ from unnest(array['public.creator_stats(uuid, timestamptz, timestamptz)',
 select pg_temp.expect(not bool_or(has_function_privilege(r, f::regprocedure, 'execute')),
   'trigger and internal functions are not callable by API roles')
 from unnest(array['public.handle_new_user()', 'public.enforce_creator_limit()', 'public.gift_purpose_same_agency()',
-  'public.touch_updated_at()', 'public.freeze_target_keys()', 'public.plan_creator_limit(text)']) f,
+  'public.touch_updated_at()', 'public.freeze_target_keys()', 'public.plan_creator_limit(text)',
+  'public.freeze_creator_agency()']) f,
   unnest(array['anon', 'authenticated']) r;
 
 -- ── behaviour ──
@@ -108,5 +118,37 @@ do $$ begin
   perform public.target_stats('a0000000-0000-0000-0000-000000000001');
   raise exception 'FAIL anon called target_stats';
 exception when insufficient_privilege then raise notice 'PASS anon cannot call dashboard RPCs';
+end $$;
+reset role;
+
+-- ── creator-limit bypass (0004) ──
+-- A founder of two agencies can't move creators between them, and neither can the service key.
+insert into auth.users (id, email) values ('00000000-0000-0000-0000-0000000000d2', 'dual@founder.test');
+insert into agency_members (agency_id, user_id, role) values
+  ('a0000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-0000000000d2', 'founder'),
+  ('b0000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-0000000000d2', 'founder');
+insert into creators (id, agency_id, unique_id) values ('c0000000-0000-0000-0000-0000000000b1', 'b0000000-0000-0000-0000-000000000002', 'movable_b');
+insert into teams (id, agency_id, name) values ('70000000-0000-0000-0000-0000000000a1', 'a0000000-0000-0000-0000-000000000001', 'Doomed team');
+insert into creators (id, agency_id, unique_id, team_id)
+  values ('c0000000-0000-0000-0000-0000000000a1', 'a0000000-0000-0000-0000-000000000001', 'on_team_a', '70000000-0000-0000-0000-0000000000a1');
+
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-0000000000d2', false);
+set role authenticated;
+do $$ begin
+  update public.creators set agency_id = 'a0000000-0000-0000-0000-000000000001' where id = 'c0000000-0000-0000-0000-0000000000b1';
+  raise exception 'FAIL founder moved a creator between agencies';
+exception when insufficient_privilege then raise notice 'PASS founder of two agencies cannot move a creator';
+end $$;
+-- Deleting a team still clears its creators' team (the FK action runs as the table owner).
+delete from teams where id = '70000000-0000-0000-0000-0000000000a1';
+reset role;
+select pg_temp.expect((select team_id is null from creators where id = 'c0000000-0000-0000-0000-0000000000a1'),
+  'deleting a team still clears creators.team_id');
+
+set role service_role;
+do $$ begin
+  update public.creators set agency_id = 'a0000000-0000-0000-0000-000000000001' where id = 'c0000000-0000-0000-0000-0000000000b1';
+  raise exception 'FAIL service_role moved a creator between agencies';
+exception when insufficient_privilege then raise notice 'PASS creators.agency_id is immutable even for the service key';
 end $$;
 reset role;
