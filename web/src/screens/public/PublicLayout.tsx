@@ -1,9 +1,12 @@
-import type { ReactNode } from 'react';
-import { Link } from 'react-router';
+import { useEffect, type ReactNode } from 'react';
+import { Link, useNavigationType } from 'react-router';
 import { SITE } from '../../lib/site';
 
 /** Header, footer and page frame shared by the landing, pricing and legal pages. */
 export function PublicLayout(p: { children: ReactNode }) {
+  // Each public page mounts its own layout, so start it at the top. Back/Forward (POP) keep the browser's position.
+  const nav = useNavigationType();
+  useEffect(() => { if (nav !== 'POP') window.scrollTo(0, 0); }, [nav]);
   return (
     <div className="tn-pub">
       <div className="tn-texture lighten" aria-hidden />

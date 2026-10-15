@@ -154,6 +154,8 @@ end $$;
 reset role;
 
 -- ── plan roster limits (0005) ──
+select pg_temp.expect(not has_function_privilege('authenticated', 'public.enforce_creator_limit()', 'execute')
+  and not has_function_privilege('authenticated', 'public.plan_creator_limit(text)', 'execute'), '0005 keeps the limit functions revoked from authenticated');
 select pg_temp.expect(public.plan_creator_limit('starter') = 10 and public.plan_creator_limit('growth') = 50
   and public.plan_creator_limit('scale') = 150, 'roster limits are 10 / 50 / 150');
 insert into agencies (id, name, plan) values ('5ca1e000-0000-0000-0000-000000000150', 'Scale cap', 'scale');
@@ -163,6 +165,6 @@ do $$ begin
   raise exception 'FAIL scale plan allowed a 151st creator';
 exception when raise_exception then
   -- The FAIL above shares SQLSTATE P0001 with the limit trigger, so match the trigger's own message.
-  if sqlerrm <> 'Your plan allows 150 creators. Upgrade to add more.' then raise; end if;
+  if sqlerrm <> 'Your plan allows 150 creators. Email support@backwoodstechsolutions.com for a larger roster.' then raise; end if;
   raise notice 'PASS scale plan caps the roster at 150';
 end $$;

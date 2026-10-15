@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { Link } from 'react-router';
+import { Link, useLocation } from 'react-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { keys } from '../lib/data';
@@ -9,9 +9,11 @@ import { Field } from '../components/ui';
 
 export function SignIn() {
   useTitle('Sign in · TokNomics');
+  // Set by Landing when a sign-in or invite link comes back expired or already used.
+  const linkFailed = (useLocation().state as { linkFailed?: boolean } | null)?.linkFailed;
   const [email, setEmail] = useState('');
   const [state, setState] = useState<'idle' | 'sending' | 'sent'>('idle');
-  const [err, setErr] = useState('');
+  const [err, setErr] = useState(linkFailed ? 'That link is invalid or has expired. Enter your email for a new one.' : '');
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) return setErr('Enter a valid email address');

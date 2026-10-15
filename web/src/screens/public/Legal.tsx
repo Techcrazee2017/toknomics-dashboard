@@ -83,8 +83,9 @@ export function Privacy() {
       <ul>
         <li><strong>Account data:</strong> your email address, name and sign-in records.</li>
         <li><strong>Agency data you enter:</strong> agency name and settings, teammates' emails and roles, the TikTok handles of creators on your roster and of your gifter accounts, and the tags you add.</li>
-        <li><strong>TikTok LIVE activity:</strong> for creators you track, gift events from their public LIVE streams (the sender's TikTok handle, nickname and ID, the gift, amounts and times) and stream status such as viewer counts.</li>
-        <li><strong>Credentials:</strong> your Euler Stream API key and, if you use them, OAuth tokens or a TikTok session cookie. These are encrypted at rest (AES-256-GCM) and readable only by our servers.</li>
+        <li><strong>TikTok LIVE activity:</strong> for creators you track and battle opponents you pin, gift events from their public LIVE streams as Euler Stream delivers them, including the sender's and recipient's public TikTok profile details (such as handle, nickname, ID, profile picture, follower counts and badges), the gift, amounts and times, and stream status such as viewer counts.</li>
+        <li><strong>Moderation records:</strong> moderation actions your team takes through the Service, including the TikTok user IDs of viewers you mute or ban.</li>
+        <li><strong>Credentials:</strong> your Euler Stream API key and, if you use them, OAuth tokens or a TikTok session cookie. These are encrypted at rest (AES-256-GCM), never sent to your browser, and decrypted only on our servers to call Euler Stream for you.</li>
         <li><strong>Billing data:</strong> Stripe processes your payment details; we keep only your Stripe customer and subscription identifiers, plan and billing status.</li>
         <li><strong>Technical data:</strong> IP address and browser details in our hosting providers' logs, and cookieless, aggregated page-view and performance measurements (Vercel Web Analytics and Speed Insights).</li>
       </ul>
@@ -100,7 +101,7 @@ export function Privacy() {
         <li>Vercel: website hosting, analytics and performance measurement</li>
         <li>Railway: API and data-collection hosting</li>
         <li>Stripe: payments and billing</li>
-        <li>Euler Stream: access to TikTok LIVE data, using your own Euler Stream account</li>
+        <li>Euler Stream: access to TikTok LIVE data and room moderation through your own Euler Stream account. We send it your API key and, if you use them, your OAuth tokens or TikTok session cookie.</li>
         <li>Our email delivery provider: sign-in and invite emails</li>
       </ul>
       <p>We may also disclose data when the law requires it, to protect rights and safety, or as part of a merger or sale of the business, in which case this policy continues to apply.</p>

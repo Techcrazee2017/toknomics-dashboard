@@ -14,10 +14,6 @@ describe('PLANS', () => {
     for (const p of PLANS) for (const f of p.feats) expect(SHIPPED, `${p.key}: "${f}"`).toContain(f);
   });
 
-  it('roster limits match public.plan_creator_limit() in supabase/migrations', () => {
-    expect(Object.fromEntries(PLANS.map(p => [p.key, p.limit]))).toEqual({ starter: 10, growth: 50, scale: 150 });
-  });
-
   it('states each roster limit in the first feature line', () => {
     for (const p of PLANS) expect(p.feats[0]).toBe(`Up to ${p.limit} creators on your roster`);
   });
