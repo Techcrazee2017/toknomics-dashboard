@@ -145,51 +145,33 @@ describe('socketUrl', () => {
   });
 });
 
-/** A fake db that records stream_status writes, and answers `update ... select` with `updated` rows. */
-function statusDb(updated: unknown[]) {
-  const calls: { op: string; row?: Record<string, unknown>; opts?: Record<string, unknown>; eq: [string, unknown][] }[] = [];
+/** A fake db for StreamConnection: records upserts to stream_status; `select` answers the start-up lookup. */
+function connDb(opts: { stored?: Record<string, unknown> | null; hangLookup?: boolean } = {}) {
+  const upserts: { row: Record<string, unknown>; opts: Record<string, unknown> }[] = [];
   const db = { from: () => ({
-    upsert: async (row: Record<string, unknown>, opts: Record<string, unknown>) => { calls.push({ op: 'upsert', row, opts, eq: [] }); return { error: null }; },
-    update: (row: Record<string, unknown>) => {
-      const c = { op: 'update', row, eq: [] as [string, unknown][] }; calls.push(c);
-      const q: any = { eq: (k: string, v: unknown) => { c.eq.push([k, v]); return q; }, select: async () => ({ data: updated, error: null }) };
-      return q;
-    },
+    select: () => ({ eq: () => ({ eq: () => ({ maybeSingle: () => (opts.hangLookup ? new Promise(() => {}) : Promise.resolve({ data: opts.stored ?? null })) }) }) }),
+    upsert: async (row: Record<string, unknown>, o: Record<string, unknown>) => { upserts.push({ row, opts: o }); return { error: null }; },
   }) };
-  return { db: db as never, calls };
+  return { db: db as never, upserts };
 }
-const setStatusOf = (c: unknown) => (c as { setStatus: (p: Record<string, unknown>, m?: 'claim' | 'owned') => Promise<void> }).setStatus.bind(c);
+const setStatusOf = (c: unknown) => (c as { setStatus: (p: Record<string, unknown>) => Promise<boolean> }).setStatus.bind(c);
+const noConnect = (c: unknown) => vi.spyOn(c as { connect: () => void }, 'connect').mockImplementation(() => {});
 
 describe('StreamConnection status writes', () => {
-  it('always includes status so partial writes pass stream_status.status NOT NULL', async () => {
+  it('upserts this socket\'s row and always includes status, so partial writes pass stream_status.status NOT NULL', async () => {
     const { StreamConnection } = await import('../src/worker');
-    const { db, calls } = statusDb([{ unique_id: 'nova_shift' }]);
-    const c = new StreamConnection('agency-1', 'nova_shift', 'k', db, {} as never, () => new Map());
-    const set = setStatusOf(c);
+    const { db, upserts } = connDb();
+    const set = setStatusOf(new StreamConnection('agency-1', 'nova_shift', 'k', db, {} as never, () => new Map()));
     await set({ status: 'live' });
     await set({ room_id: '7400', viewer_count: 12 });
-    expect(calls[1]!.row).toMatchObject({ status: 'live', room_id: '7400', viewer_count: 12 });
+    expect(upserts[0]!.opts).toEqual({ onConflict: 'agency_id,unique_id' });
+    expect(upserts[1]!.row).toMatchObject({ agency_id: 'agency-1', unique_id: 'nova_shift', status: 'live', room_id: '7400', viewer_count: 12 });
   });
 
-  it('claims the row with an upsert, then only writes while it still owns it', async () => {
+  it('reports a failed write instead of throwing', async () => {
     const { StreamConnection } = await import('../src/worker');
-    const { db, calls } = statusDb([{ unique_id: 'nova_shift' }]);
-    const set = setStatusOf(new StreamConnection('agency-1', 'nova_shift', 'k', db, {} as never, () => new Map()));
-    await set({ status: 'connecting' }, 'claim');
-    expect(calls[0]).toMatchObject({ op: 'upsert', row: { agency_id: 'agency-1', unique_id: 'nova_shift' }, opts: { onConflict: 'agency_id,unique_id' } });
-    expect(typeof calls[0]!.row!.worker_id).toBe('string');
-    await set({ status: 'live' });
-    expect(calls[1]).toMatchObject({ op: 'update' });
-    expect(calls[1]!.eq.map(e => e[0]).sort()).toEqual(['agency_id', 'unique_id', 'worker_id']);
-    expect(calls[1]!.eq.find(e => e[0] === 'worker_id')![1]).toBe(calls[0]!.row!.worker_id);
-    expect(calls).toHaveLength(2); // the update matched: no fallback insert
-  });
-
-  it('never takes a row back from a newer process: the fallback insert ignores existing rows', async () => {
-    const { StreamConnection } = await import('../src/worker');
-    const { db, calls } = statusDb([]); // update matched nothing: another worker owns the row (or it is missing)
-    await setStatusOf(new StreamConnection('agency-1', 'nova_shift', 'k', db, {} as never, () => new Map()))({ status: 'live' });
-    expect(calls[1]).toMatchObject({ op: 'upsert', opts: { ignoreDuplicates: true } });
+    const db = { from: () => ({ upsert: async () => ({ error: { message: 'down' } }) }) };
+    expect(await setStatusOf(new StreamConnection('agency-1', 'nova_shift', 'k', db as never, {} as never, () => new Map()))({ status: 'live' })).toBe(false);
   });
 });
 
@@ -198,65 +180,55 @@ describe('StreamConnection.start', () => {
     vi.useFakeTimers();
     try {
       const { StreamConnection } = await import('../src/worker');
-      const hang = { from: () => ({ select: () => ({ eq: () => ({ eq: () => ({ maybeSingle: () => new Promise(() => {}) }) }) }) }) };
-      const c = new StreamConnection('agency-1', 'nova_shift', 'k', hang as never, {} as never, () => new Map());
-      const connect = vi.spyOn(c as unknown as { connect: () => void }, 'connect').mockImplementation(() => {});
+      const c = new StreamConnection('agency-1', 'nova_shift', 'k', connDb({ hangLookup: true }).db, {} as never, () => new Map());
+      const connect = noConnect(c);
       const started = c.start();
       await vi.advanceTimersByTimeAsync(20_001);
       await started;
       expect(connect).toHaveBeenCalledTimes(1);
+      c.stop();
     } finally { vi.useRealTimers(); }
   });
-  it('still opens the socket when the ownership claim hangs, and aborts the stale request', async () => {
-    vi.useFakeTimers();
-    try {
-      const { StreamConnection } = await import('../src/worker');
-      let signal: AbortSignal | undefined;
-      const hung = { abortSignal: (s: AbortSignal) => { signal = s; return hung; }, then: () => {} }; // never settles
-      const db = { from: () => ({
-        select: () => ({ eq: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null }) }) }) }),
-        upsert: () => hung,
-      }) };
-      const c = new StreamConnection('agency-1', 'nova_shift', 'k', db as never, {} as never, () => new Map());
-      const connect = vi.spyOn(c as unknown as { connect: () => void }, 'connect').mockImplementation(() => {});
-      const started = c.start();
-      await vi.advanceTimersByTimeAsync(20_001);
-      await started;
-      expect(connect).toHaveBeenCalledTimes(1);
-      // A claim that timed out must not be able to land later and retake the row from a newer process.
-      expect(signal).toBeDefined();
-      expect(signal!.aborted).toBe(true);
-    } finally { vi.useRealTimers(); }
-  });
+
   it('does not connect if it was stopped while the lookup was pending', async () => {
     const { StreamConnection } = await import('../src/worker');
     let release!: (v: unknown) => void;
-    const writes = statusDb([{ unique_id: 'nova_shift' }]);
-    const base = (writes.db as unknown as { from: () => Record<string, unknown> }).from();
-    const slow = { from: () => ({ ...base, select: () => ({ eq: () => ({ eq: () => ({ maybeSingle: () => new Promise(r => { release = r; }) }) }) }) }) };
+    const base = connDb().db as unknown as { from: () => Record<string, unknown> };
+    const slow = { from: () => ({ ...base.from(), select: () => ({ eq: () => ({ eq: () => ({ maybeSingle: () => new Promise(r => { release = r; }) }) }) }) }) };
     const c = new StreamConnection('agency-1', 'nova_shift', 'k', slow as never, {} as never, () => new Map());
     const connect = vi.spyOn(c as unknown as { connect: () => void }, 'connect');
     const started = c.start();
     c.stop();
     release({ data: null });
     await started;
-    expect(connect).toHaveBeenCalledTimes(1);
-    // connect() itself returns early when stopped: no socket is opened.
+    expect(connect).not.toHaveBeenCalled();
     expect((c as unknown as { ws?: unknown }).ws).toBeUndefined();
   });
 });
 
-describe('StreamConnection.claim', () => {
-  it('stays unclaimed when the claim fails, so the supervisor can retry it, and is claimed once it succeeds', async () => {
-    const { StreamConnection } = await import('../src/worker');
-    let fail = true;
-    const db = { from: () => ({ upsert: () => ({ abortSignal: () => ({ then: (res: (v: unknown) => unknown) => Promise.resolve(fail ? { error: { message: 'down' } } : { error: null }).then(res) }) }) }) };
-    const c = new StreamConnection('agency-1', 'nova_shift', 'k', db as never, {} as never, () => new Map());
-    await c.claim();
-    expect(c.claimed).toBe(false);
-    fail = false;
-    await c.claim();
-    expect(c.claimed).toBe(true);
+describe('StreamConnection heartbeat', () => {
+  it('rewrites its status on an interval, so a wrong label corrects itself, and stops when stopped', async () => {
+    vi.useFakeTimers();
+    try {
+      const { StreamConnection } = await import('../src/worker');
+      const { db, upserts } = connDb({ stored: { room_id: '7400', events_ingested: 5 } });
+      const c = new StreamConnection('agency-1', 'nova_shift', 'k', db, {} as never, () => new Map());
+      noConnect(c);
+      await c.start();
+      (c as unknown as { connectedAt: string }).connectedAt = '2026-10-15T20:00:00.000Z';   // what the socket's open handler records
+      await setStatusOf(c)({ status: 'live', connected_at: '2026-10-15T20:00:00.000Z' });
+      const before = upserts.length;
+      // Something else (an old process, a stale request) overwrote the row; the next heartbeat puts this socket's truth back.
+      await vi.advanceTimersByTimeAsync(30_001);
+      expect(upserts.length).toBe(before + 1);
+      expect(upserts.at(-1)!.row).toMatchObject({ agency_id: 'agency-1', unique_id: 'nova_shift', status: 'live', events_ingested: 5, connected_at: '2026-10-15T20:00:00.000Z' });
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(upserts.length).toBe(before + 2);
+      c.stop();
+      const stopped = upserts.length;
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(upserts.length).toBe(stopped);                 // no heartbeat after stop (stop itself wrote once, counted above)
+    } finally { vi.useRealTimers(); }
   });
 });
 
@@ -292,105 +264,55 @@ describe('Supervisor', () => {
   });
 
   describe('idle status writes', () => {
-    /**
-     * Records the writes markIdle makes. `inserted` are the rows the insert-ignore created; `updated` returns the uids the fenced
-     * update matched (default: all of them). `failUpdate` makes the update fail.
-     */
-    /** A thenable like supabase-js's builders: awaitable, with `.abortSignal()`. `hang` never settles. */
-    const settled = <T,>(result: T, signals: AbortSignal[], hang = false) => {
-      const o: any = {
-        abortSignal: (s: AbortSignal) => { signals.push(s); return o; },
-        then: (res: (v: T) => unknown, rej?: (e: unknown) => unknown) => (hang ? new Promise(() => {}) : Promise.resolve(result).then(res, rej)),
-      };
-      return o;
-    };
-    function idleDb(opts: { failUpdate?: boolean; hang?: boolean; inserted?: (rows: { agency_id: string; unique_id: string }[]) => unknown[]; updated?: (ids: string[], agencyId: string) => string[] } = {}) {
-      const calls: { op: string; rows?: unknown; patch?: Record<string, unknown>; opts?: Record<string, unknown>; filters: [string, unknown][] }[] = [];
-      const signals: AbortSignal[] = [];
+    /** Records the upserts markIdle makes. */
+    function idleDb(fail = false, hang = false) {
+      const upserts: { rows: { agency_id: string; unique_id: string; status: string }[]; opts: Record<string, unknown> }[] = [];
       const db = { from: () => ({
-        upsert: (rows: { agency_id: string; unique_id: string }[], o: Record<string, unknown>) => {
-          calls.push({ op: 'upsert', rows, opts: o, filters: [] });
-          return { select: () => settled({ data: opts.inserted ? opts.inserted(rows) : rows, error: null }, signals, opts.hang) };
-        },
-        update: (patch: Record<string, unknown>) => {
-          const c = { op: 'update', patch, filters: [] as [string, unknown][] }; calls.push(c);
-          const q: any = {
-            eq: (k: string, v: unknown) => { c.filters.push([k, v]); return q; },
-            in: (k: string, v: unknown) => { c.filters.push([k, v]); return q; },
-            or: (f: string) => { c.filters.push(['or', f]); return q; },
-            select: () => {
-              if (opts.failUpdate) return settled({ data: null, error: { message: 'down' } }, signals);
-              const agencyId = String(c.filters.find(f => f[0] === 'agency_id')![1]), ids = c.filters.find(f => f[0] === 'unique_id')![1] as string[];
-              const hit = opts.updated ? opts.updated(ids, agencyId) : ids;
-              return settled({ data: hit.map(unique_id => ({ agency_id: agencyId, unique_id })), error: null }, signals);
-            },
-          };
-          return q;
+        upsert: (rows: never, opts: Record<string, unknown>) => {
+          upserts.push({ rows, opts });
+          return hang ? new Promise(() => {}) : Promise.resolve({ error: fail ? { message: 'down' } : null });
         },
       }) };
-      return { db: db as never, calls, signals };
+      return { db: db as never, upserts };
     }
+    type Sup = { markIdle: (s: { agencyId: string; uid: string }[], st: 'paused' | 'capacity') => Promise<void> };
 
-    it('creates missing rows without overwriting, then updates only rows this process owns or whose owner went quiet', async () => {
+    it('writes every idle slot as last-writer-wins, and again on every reconcile', async () => {
       const { Supervisor } = await import('../src/worker');
-      const { db, calls } = idleDb();
-      const sup = new Supervisor(db, {} as never) as unknown as { markIdle: (s: { agencyId: string; uid: string }[], st: 'paused' | 'capacity') => Promise<void> };
-      await sup.markIdle([{ agencyId: 'a', uid: 'x' }, { agencyId: 'a', uid: 'y' }, { agencyId: 'b', uid: 'z' }], 'capacity');
-      expect(calls[0]).toMatchObject({ op: 'upsert', opts: { ignoreDuplicates: true } });   // never takes an existing row
-      const updates = calls.filter(c => c.op === 'update');
-      expect(updates).toHaveLength(2);                                                      // one per agency
-      const workerId = (calls[0]!.rows as { worker_id: string }[])[0]!.worker_id;
-      for (const u of updates) {
-        const or = String(u.filters.find(f => f[0] === 'or')![1]);
-        expect(or).toContain(`worker_id.eq.${workerId}`);                                   // rows it owns...
-        expect(or).toMatch(/updated_at\.lt\.\d{4}-\d\d-\d\dT/);                             // ...or whose owner stopped writing
-      }
+      const { db, upserts } = idleDb();
+      const sup = new Supervisor(db, {} as never) as unknown as Sup;
+      const slots = [{ agencyId: 'a', uid: 'x' }, { agencyId: 'a', uid: 'y' }, { agencyId: 'b', uid: 'z' }];
+      await sup.markIdle(slots, 'capacity');
+      expect(upserts).toHaveLength(1);
+      expect(upserts[0]!.opts).toEqual({ onConflict: 'agency_id,unique_id' });        // overwrites: no ownership, no ignoreDuplicates
+      expect(upserts[0]!.rows.map(r => r.status)).toEqual(['capacity', 'capacity', 'capacity']);
+      await sup.markIdle(slots, 'capacity');
+      expect(upserts).toHaveLength(2);                                                // re-asserted, not cached: a stale row is corrected
     });
 
-    it('retries a slot whose row a live process still owns, and records it once it is actually written', async () => {
+    it('writes in bounded batches', async () => {
       const { Supervisor } = await import('../src/worker');
-      let ownerQuiet = false;
-      // The insert-ignore creates nothing (the row exists); the fenced update matches only once the other owner has gone quiet.
-      const { db, calls } = idleDb({ inserted: () => [], updated: ids => (ownerQuiet ? ids : []) });
-      const sup = new Supervisor(db, {} as never) as unknown as { markIdle: (s: { agencyId: string; uid: string }[], st: 'capacity') => Promise<void>; idle: Map<string, string> };
-      await sup.markIdle([{ agencyId: 'a', uid: 'x' }], 'capacity');
-      expect(sup.idle.size).toBe(0);                       // matched nothing: not recorded
-      const afterFirst = calls.length;
-      await sup.markIdle([{ agencyId: 'a', uid: 'x' }], 'capacity');
-      expect(calls.length).toBeGreaterThan(afterFirst);    // so it is attempted again, not skipped
-      ownerQuiet = true;
-      await sup.markIdle([{ agencyId: 'a', uid: 'x' }], 'capacity');
-      expect(sup.idle.get('a:x')).toBe('capacity');        // written once the lease allows it
+      const { db, upserts } = idleDb();
+      const sup = new Supervisor(db, {} as never) as unknown as Sup;
+      await sup.markIdle(Array.from({ length: 250 }, (_, i) => ({ agencyId: 'a', uid: `c${i}` })), 'paused');
+      expect(upserts.map(u => u.rows.length)).toEqual([100, 100, 50]);
     });
 
-    it('aborts an idle write that times out, so it cannot land after a later reconcile', async () => {
+    it('logs a failed write and does not throw, so the reconcile carries on', async () => {
+      const { Supervisor } = await import('../src/worker');
+      const sup = new Supervisor(idleDb(true).db, {} as never) as unknown as Sup;
+      await expect(sup.markIdle([{ agencyId: 'a', uid: 'x' }], 'paused')).resolves.toBeUndefined();
+    });
+
+    it('gives up on a write that hangs rather than wedging the reconcile', async () => {
       vi.useFakeTimers();
       try {
         const { Supervisor } = await import('../src/worker');
-        const { db, signals } = idleDb({ hang: true });
-        const sup = new Supervisor(db, {} as never) as unknown as { markIdle: (s: { agencyId: string; uid: string }[], st: 'paused') => Promise<void>; idle: Map<string, string> };
+        const sup = new Supervisor(idleDb(false, true).db, {} as never) as unknown as Sup;
         const done = sup.markIdle([{ agencyId: 'a', uid: 'x' }], 'paused').catch(e => e as Error);
         await vi.advanceTimersByTimeAsync(20_001);
         expect(((await done) as Error).message).toMatch(/timed out/);
-        expect(signals.length).toBeGreaterThan(0);
-        expect(signals.every(s => s.aborted)).toBe(true);   // the request itself was cancelled, not just awaited less
-        expect(sup.idle.size).toBe(0);
       } finally { vi.useRealTimers(); }
-    });
-
-    it('does not record a slot as written when the update fails, so it is retried', async () => {
-      const { Supervisor } = await import('../src/worker');
-      const bad = idleDb({ failUpdate: true });
-      const sup = new Supervisor(bad.db, {} as never) as unknown as { markIdle: (s: { agencyId: string; uid: string }[], st: 'paused') => Promise<void>; idle: Map<string, string> };
-      await sup.markIdle([{ agencyId: 'a', uid: 'x' }], 'paused');
-      expect(sup.idle.size).toBe(0);
-      const good = idleDb();
-      const sup2 = new Supervisor(good.db, {} as never) as unknown as typeof sup;
-      await sup2.markIdle([{ agencyId: 'a', uid: 'x' }], 'paused');
-      expect(sup2.idle.get('a:x')).toBe('paused');
-      const n = good.calls.length;
-      await sup2.markIdle([{ agencyId: 'a', uid: 'x' }], 'paused');
-      expect(good.calls.length).toBe(n);                                                    // unchanged: no repeat write
     });
   });
 });

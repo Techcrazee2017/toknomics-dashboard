@@ -23,7 +23,6 @@ delete from public.stream_status;
 alter table public.stream_status
   drop constraint if exists stream_status_pkey,
   add column agency_id uuid not null references public.agencies on delete cascade,
-  add column worker_id text,
   add primary key (agency_id, unique_id);
 alter table public.stream_status drop constraint if exists stream_status_status_check;
 alter table public.stream_status add constraint stream_status_status_check

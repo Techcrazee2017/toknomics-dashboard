@@ -3,7 +3,6 @@
 // socket authenticates with that agency's own Euler API key and books gifts to that agency only, so one
 // customer's key, quota and data never serve another. An agency whose key is missing or rejected is paused;
 // agencies over their socket budget, or crowding out others past MAX_SOCKETS, are marked 'capacity'.
-import { randomUUID } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import WebSocket from 'ws';
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -20,11 +19,14 @@ const MAX_SOCKETS = Number(process.env.MAX_SOCKETS?.trim() || 200);
 export const socketBudget = (plan: string) => planOf(plan).limit * 2;
 /** A stuck Supabase call must not wedge the reconcile loop. */
 const DB_TIMEOUT_MS = 20_000;
-/** A row whose owner has not written for this long can be taken over; it is how a newer worker reclaims what an exited one left. */
-const LEASE_MS = 90_000;
+/**
+ * Status rows are last-writer-wins and rewritten on this interval (each socket for itself, idle slots on every reconcile), so
+ * a label that is ever wrong - a stale write from a timed-out request, an old process during a redeploy - corrects itself
+ * within one interval. That replaces any scheme for deciding who owns a row, which has more ways to fail than the label is worth.
+ */
+const HEARTBEAT_MS = 30_000;
 /** Ids per `.in()` filter: keeps the URL short and each response well under PostgREST's row cap. */
 const IN_CHUNK = 100;
-const WORKER_ID = `${process.env.RAILWAY_DEPLOYMENT_ID ?? 'local'}:${process.pid}:${randomUUID().slice(0, 8)}`;
 const RECONCILE_MS = 30_000;
 const CATALOG_MS = 10 * 60_000;
 const STALE_MS = 45_000;      // no frame or pong for this long → terminate and reconnect
@@ -68,15 +70,6 @@ const chunks = <T>(xs: readonly T[], n = IN_CHUNK): T[][] => Array.from({ length
 const withTimeout = <T>(p: PromiseLike<T>, what: string, ms = DB_TIMEOUT_MS): Promise<T> =>
   Promise.race([Promise.resolve(p), new Promise<never>((_, rej) => setTimeout(() => rej(new Error(`${what} timed out after ${ms}ms`)), ms).unref())]);
 
-/**
- * Like withTimeout, for writes: when the timeout fires the request is aborted too. Stopping the wait alone leaves the mutation
- * running, and a late write could then overwrite what a later reconcile wrote.
- */
-const abortable = <T>(run: (signal: AbortSignal) => PromiseLike<T>, what: string, ms = DB_TIMEOUT_MS): Promise<T> => {
-  const ctl = new AbortController();
-  return withTimeout(run(ctl.signal), what, ms).catch(e => { ctl.abort(); throw e; });
-};
-
 export type StreamHooks = {
   /** Euler closed with 4401: the agency's key is no longer accepted. */
   onInvalidKey?: (agencyId: string, rejectedKey: string) => void;
@@ -89,6 +82,8 @@ export class StreamConnection {
   private lastSeen = 0;
   private retryTimer?: NodeJS.Timeout;
   private pingTimer?: NodeJS.Timeout;
+  private heartbeatTimer?: NodeJS.Timeout;
+  private connectedAt: string | null = null;
   private roomId: string | null = null;
   private storedRoomId: string | null = null;
   private viewers: number | null = null;
@@ -104,9 +99,9 @@ export class StreamConnection {
   ) {}
 
   /**
-   * Claims the status row, restores the stored room and event count, then opens the socket. The lookup is best-effort:
-   * if it fails or hangs the socket still opens with defaults (worst case the live-session clock restarts), so a slow
-   * database never leaves a tracked creator without a socket. stop() during the lookup is honoured by connect().
+   * Restores the stored room and event count, starts the status heartbeat and opens the socket. The lookup is best-effort: if it
+   * fails or hangs the socket still opens with defaults (worst case the live-session clock restarts), so a slow database never
+   * leaves a tracked creator without a socket. stop() during the lookup is honoured by connect().
    */
   async start() {
     this.stopped = false;
@@ -118,33 +113,21 @@ export class StreamConnection {
     } catch (e) {
       log({ level: 'warn', msg: 'stream status lookup failed, connecting with defaults', agency: this.agencyId, uid: this.uniqueId, err: (e as Error).message });
     }
-    // The newest process to start a socket owns the row. Every later write is fenced on worker_id, so during a rolling
-    // deploy the old process can no longer touch what the new one now reports.
-    // Bounded like the lookup above: a hung write must not keep the socket from opening or stall the supervisor.
-    await this.claim();
+    if (this.stopped) return;
+    clearInterval(this.heartbeatTimer);
+    this.heartbeatTimer = setInterval(() => void this.setStatus({
+      room_id: this.roomId, viewer_count: this.viewers, events_ingested: this.events,
+      connected_at: this.status === 'live' ? this.connectedAt : null, next_retry_at: this.status === 'live' ? null : undefined,
+    }), HEARTBEAT_MS);
+    this.heartbeatTimer.unref?.();
     this.connect();
-  }
-
-  /** Whether this process has taken ownership of the status row. If the first attempt fails, the supervisor retries it. */
-  claimed = false;
-
-  /**
-   * Takes the status row. On a timeout the request is aborted, so a delayed claim can't land later and retake the row from a newer
-   * process. A failure is not fatal: the socket still runs, and the supervisor calls this again on each reconcile until it succeeds.
-   */
-  async claim() {
-    try {
-      this.claimed = await abortable(signal => this.setStatus({ status: this.status, next_retry_at: null }, 'claim', signal), 'claim stream status');
-      if (!this.claimed) log({ level: 'warn', msg: 'status claim rejected, will retry', agency: this.agencyId, uid: this.uniqueId });
-    } catch (e) {
-      log({ level: 'warn', msg: 'status claim failed, will retry', agency: this.agencyId, uid: this.uniqueId, err: (e as Error).message });
-    }
   }
 
   stop(status: 'stopped' | 'paused' | 'capacity' = 'stopped') {
     this.stopped = true;
     clearTimeout(this.retryTimer);
     clearInterval(this.pingTimer);
+    clearInterval(this.heartbeatTimer);
     this.ws?.close(1000, 'untracked');
     void this.setStatus({ status, next_retry_at: null, connected_at: null, viewer_count: null });
   }
@@ -177,7 +160,8 @@ export class StreamConnection {
         if (Date.now() - this.lastSeen > STALE_MS) { log({ msg: 'stale socket, terminating', agency: this.agencyId, uid: this.uniqueId }); ws.terminate(); return; }
         if (ws.readyState === WebSocket.OPEN) ws.ping();
       }, PING_MS);
-      void this.setStatus({ status: 'live', close_code: null, last_error: null, connected_at: new Date().toISOString() });
+      this.connectedAt = new Date().toISOString();
+      void this.setStatus({ status: 'live', close_code: null, last_error: null, connected_at: this.connectedAt });
     });
 
     ws.on('pong', () => { this.lastSeen = Date.now(); });
@@ -231,26 +215,12 @@ export class StreamConnection {
     void this.setStatus(patch);
   }
 
-  /**
-   * claim: take ownership (upsert). Otherwise the write only lands while this process still owns the row; if the row
-   * does not exist yet it is created without taking anything from another owner.
-   */
-  private async setStatus(patch: Record<string, unknown>, mode: 'claim' | 'owned' = 'owned', signal?: AbortSignal): Promise<boolean> {
+  /** Last-writer-wins upsert of this socket's row. Returns whether the write succeeded; a failure is logged, never thrown. */
+  private async setStatus(patch: Record<string, unknown>): Promise<boolean> {
     this.lastStatusWrite = Date.now();
     if (typeof patch.status === 'string') this.status = patch.status;
-    const now = new Date().toISOString();
-    const row = { updated_at: now, status: this.status, ...patch };
-    const key = { agency_id: this.agencyId, unique_id: this.uniqueId };
-    let error: { message: string } | null = null;
-    if (mode === 'claim') {
-      const claim = this.db.from('stream_status').upsert({ ...key, worker_id: WORKER_ID, ...row }, { onConflict: 'agency_id,unique_id' });
-      ({ error } = await (signal ? claim.abortSignal(signal) : claim));
-    } else {
-      const upd = await this.db.from('stream_status').update(row).eq('agency_id', this.agencyId).eq('unique_id', this.uniqueId).eq('worker_id', WORKER_ID).select('unique_id');
-      error = upd.error;
-      // Nothing matched: either the row is missing (create it) or another process owns it (leave it alone).
-      if (!error && !upd.data?.length) ({ error } = await this.db.from('stream_status').upsert({ ...key, worker_id: WORKER_ID, ...row }, { onConflict: 'agency_id,unique_id', ignoreDuplicates: true }));
-    }
+    const { error } = await this.db.from('stream_status').upsert(
+      { agency_id: this.agencyId, unique_id: this.uniqueId, updated_at: new Date().toISOString(), status: this.status, ...patch }, { onConflict: 'agency_id,unique_id' });
     if (error) log({ level: 'warn', msg: 'status write failed', agency: this.agencyId, uid: this.uniqueId, err: error.message });
     return !error;
   }
@@ -372,8 +342,6 @@ export function planSockets(
 
 export class Supervisor {
   private conns = new Map<string, StreamConnection>();
-  /** Last status written for wanted slots that have no socket (paused / capacity), so we write on change only. */
-  private idle = new Map<string, string>();
   private reconciling = false;
   private again = false;
   private catalog: GiftCatalog = new Map();
@@ -453,9 +421,8 @@ export class Supervisor {
         log({ msg: reason === 'stopped' ? 'untracked' : reason, agency: c.agencyId, uid: c.uniqueId });
       }
       for (const [k, slot] of plan.run) {
-        this.idle.delete(k);
         const existing = this.conns.get(k);
-        if (existing) { existing.rekey(slot.apiKey); if (!existing.claimed) void existing.claim(); continue; }
+        if (existing) { existing.rekey(slot.apiKey); continue; }
         const c = new StreamConnection(slot.agencyId, slot.uid, slot.apiKey, this.db, this.gifts, () => this.catalog, { onInvalidKey: (a, key) => void this.markKeyInvalid(a, key) });
         this.conns.set(k, c);
         try { await c.start(); }
@@ -486,35 +453,17 @@ export class Supervisor {
   }
 
   /**
-   * Writes a status for wanted slots that have no socket, once per change. Missing rows are created; an existing row is only
-   * updated while this process owns it or its owner has gone quiet (a lease), so during a rolling deploy the old process
-   * can't mark as 'capacity' a slot the new process now reports live, and a slot the exited process left behind is reclaimed.
+   * Writes a status for wanted slots that have no socket (paused / capacity). Every reconcile re-asserts them, so a row that
+   * something else wrote in the meantime (an old process during a redeploy) is corrected within one interval.
    */
   private async markIdle(slots: { agencyId: string; uid: string }[], status: 'paused' | 'capacity') {
-    const todo = slots.filter(s => this.idle.get(slotKey(s.agencyId, s.uid)) !== status);
-    if (!todo.length) return;
-    const now = Date.now();
-    const base = { status, worker_id: WORKER_ID, next_retry_at: null, connected_at: null, viewer_count: null, updated_at: new Date(now).toISOString() };
-    const stale = new Date(now - LEASE_MS).toISOString();
-    // `.select()` returns only the rows each statement actually wrote: new rows from the insert, and rows this process owns (or whose
-    // owner went quiet) from the update. A slot another live process still owns matches neither, so it is not recorded and is retried
-    // on the next reconcile, after the lease has had a chance to expire.
-    const written = new Set<string>();
-    const created = await abortable(signal => this.db.from('stream_status').upsert(
-      todo.map(s => ({ agency_id: s.agencyId, unique_id: s.uid, ...base })), { onConflict: 'agency_id,unique_id', ignoreDuplicates: true }).select('agency_id, unique_id').abortSignal(signal), 'create idle status');
-    if (created.error) { log({ level: 'warn', msg: 'idle status write failed', status, err: created.error.message }); return; }
-    for (const r of created.data ?? []) written.add(slotKey(r.agency_id, r.unique_id));
-    const byAgency = new Map<string, string[]>();
-    for (const s of todo) byAgency.set(s.agencyId, [...(byAgency.get(s.agencyId) ?? []), s.uid]);
-    for (const [agencyId, uids] of byAgency) {
-      for (const ids of chunks(uids)) {
-        const upd = await abortable(signal => this.db.from('stream_status').update(base).eq('agency_id', agencyId).in('unique_id', ids)
-          .or(`worker_id.eq.${WORKER_ID},updated_at.lt.${stale}`).select('agency_id, unique_id').abortSignal(signal), 'update idle status');
-        if (upd.error) { log({ level: 'warn', msg: 'idle status write failed', status, err: upd.error.message }); return; }
-        for (const r of upd.data ?? []) written.add(slotKey(r.agency_id, r.unique_id));
-      }
+    const now = new Date().toISOString();
+    for (const batch of chunks(slots)) {
+      const { error } = await withTimeout(this.db.from('stream_status').upsert(
+        batch.map(s => ({ agency_id: s.agencyId, unique_id: s.uid, status, next_retry_at: null, connected_at: null, viewer_count: null, updated_at: now })),
+        { onConflict: 'agency_id,unique_id' }), 'write idle status');
+      if (error) { log({ level: 'warn', msg: 'idle status write failed', status, err: error.message }); return; }
     }
-    for (const s of todo) if (written.has(slotKey(s.agencyId, s.uid))) this.idle.set(slotKey(s.agencyId, s.uid), status);
   }
 
   /** Euler rejected the agency's key: record it so the dashboard says so and ingestion stops until a new key is saved. */
