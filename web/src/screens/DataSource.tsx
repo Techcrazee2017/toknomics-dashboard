@@ -8,7 +8,7 @@ import { keys, useAccounts, useCalls, useCatalog, useConnection, useGiftUsage, u
 import { ago, at, money } from '../lib/format';
 import { supabase } from '../lib/supabase';
 import { connectionLook, PageHeader } from '../components/Shell';
-import { Code, Dot, Field, Seg } from '../components/ui';
+import { Code, Dialog, Dot, Field, Seg } from '../components/ui';
 import { workerLine } from './LiveTargets';
 import { SNIP_JWT, SNIP_SDK, SNIP_WS, snipConnector, snipSdkTs } from './snippets';
 
@@ -26,6 +26,7 @@ export function DataSource() {
   const [errs, setErrs] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<'' | 'save' | 'connect' | 'test' | 'mode' | 'delete'>('');
   const [risk, setRisk] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   useEffect(() => { if (c) setForm(f => ({ ...f, host: c.host, pinned: c.pinned_user_id ?? '' })); }, [c?.host, c?.pinned_user_id]); // eslint-disable-line react-hooks/exhaustive-deps
   // Results of the OAuth round-trip come back as query params from the API's callback
@@ -90,7 +91,7 @@ export function DataSource() {
   const [cfg, setCfg] = useState<'remote' | 'direct'>('remote');
   const configJson = JSON.stringify({ mcpServers: { 'euler-stream': cfg === 'direct' ? { url } : { command: 'npx', args: ['mcp-remote', url] } } }, null, 2);
   const copy = (text: string, label: string) => navigator.clipboard.writeText(text).then(() => toast(label + ' copied'), () => toast('Copy failed. Select the text instead.'));
-  const look = connectionLook(c?.key_status);
+  const look = connectionLook(conn.isLoading ? 'loading' : c?.key_status);
   // Live ingestion needs only an accepted API key. `moderating` is the optional OAuth / cookie session for room actions.
   const connected = c?.key_status === 'valid';
   const moderating = c?.status === 'connected';
@@ -113,6 +114,14 @@ export function DataSource() {
   return (
     <>
       <PageHeader title="Data source" subtitle="One Euler Stream connection for the whole agency. It feeds the ledger, live targets and P&L." />
+      {confirmDelete && (
+        <Dialog title="Delete Euler credentials?" onClose={() => setConfirmDelete(false)}
+          body="This permanently removes your stored Euler API key, cookie and tokens. Live data stops for this agency until you add a key again. Your ledger and history stay."
+          actions={<>
+            <button type="button" className="btn btn-secondary" onClick={() => setConfirmDelete(false)}>Keep credentials</button>
+            <button type="button" className="btn btn-secondary btn-destructive" disabled={busy !== ''} onClick={() => void run('delete', async () => { await api.deleteCredentials(agency.id); setForm(f => ({ ...f, apiKey: '', cookie: '' })); setConfirmDelete(false); refresh(); toast('Euler credentials deleted'); })}><i className="ph ph-trash" />Delete credentials</button>
+          </>}>{null}</Dialog>
+      )}
       {c && !connected && (
         <section className="card elev-sm tn-card gap-6">
           <div className="tn-card-head"><div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}><span className="card-kicker">Get started</span><span className="card-title">Set up Euler Stream</span></div><span style={{ fontSize: 12, color: 'var(--color-neutral-500)' }}>{steps.filter(s => !s.done).length} of 3 steps left</span></div>
@@ -135,7 +144,7 @@ export function DataSource() {
         <div className="tn-col">
           <form className="card elev-sm tn-card gap-6" onSubmit={saveKey} noValidate>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}><span className="card-kicker">Connection</span><span className="card-title">Euler Stream for {agency.name}</span></div>
-            {c?.key_status === 'invalid' && <div className="tn-chip" role="alert" style={{ justifyContent: 'flex-start', color: 'var(--color-accent-200)' }}><i className="ph ph-warning" style={{ marginTop: 2 }} />Euler rejected the saved API key. Paste a new one to resume live data.</div>}
+            {c?.key_status === 'invalid' && <div className="tn-alert" role="alert"><i className="ph ph-warning" />Euler rejected the saved API key. Live data is paused. Paste a new key to resume.</div>}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--space-4)' }}>
               <Field label="Server host" error={errs.host} hint="Shown in the MCP endpoint and client config.">
                 <input className="input" value={form.host} onChange={e => { setForm(f => ({ ...f, host: e.target.value })); setErrs({}); }} readOnly={!isAdmin} placeholder="<host>" />
@@ -174,12 +183,13 @@ export function DataSource() {
                 </div>
               </div>
               {isAdmin && !c?.cookie_ack_at && (
-                <Field label="" error={errs.cookieRisk}>
+                <div>
                   <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 13, color: 'var(--color-neutral-300)', lineHeight: 1.5 }}>
-                    <input type="checkbox" checked={risk} onChange={e => { setRisk(e.target.checked); setErrs({}); }} style={{ marginTop: 3 }} />
+                    <input type="checkbox" checked={risk} aria-invalid={!!errs.cookieRisk} aria-describedby={errs.cookieRisk ? 'cookie-risk-err' : undefined} onChange={e => { setRisk(e.target.checked); setErrs({}); }} style={{ marginTop: 3 }} />
                     <span>I understand cookie mode signs in to TikTok as that account, and TikTok may restrict accounts used this way. I accept the risk.</span>
                   </label>
-                </Field>
+                  {errs.cookieRisk && <div id="cookie-risk-err" className="tn-err" role="alert">{errs.cookieRisk}</div>}
+                </div>
               )}
               {oauth ? <>
                 <Field label="Pinned user ID (optional)" error={errs.pinnedUserId} hint="Selects a cached TikTok session and skips the account picker. If none is found, the normal flow continues.">
@@ -211,7 +221,7 @@ export function DataSource() {
             <div className="card elev-sm tn-card gap-3">
               <span className="card-title tn-title-sm">Remove credentials</span>
               <span style={{ fontSize: 13, color: 'var(--color-neutral-400)', lineHeight: 1.5 }}>Deletes your stored Euler API key, cookie and tokens, and stops live data for this agency. Your ledger stays.</span>
-              <button type="button" className="btn btn-secondary" style={{ alignSelf: 'flex-start' }} disabled={busy !== ''} onClick={() => { if (window.confirm('Delete the stored Euler credentials? Live data stops until you add a key again.')) void run('delete', async () => { await api.deleteCredentials(agency.id); setForm(f => ({ ...f, apiKey: '', cookie: '' })); refresh(); toast('Euler credentials deleted'); }); }}><i className="ph ph-trash" />Delete Euler credentials</button>
+              <button type="button" className="btn btn-secondary btn-destructive" style={{ alignSelf: 'flex-start' }} disabled={busy !== ''} onClick={() => setConfirmDelete(true)}><i className="ph ph-trash" />Delete Euler credentials</button>
             </div>
           )}
           <LedgerSettings />

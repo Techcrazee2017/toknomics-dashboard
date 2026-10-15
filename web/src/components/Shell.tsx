@@ -15,7 +15,8 @@ export const NAV = [
 
 /** Live ingestion needs only an API key Euler accepted; the OAuth / cookie session (`status`) is for room moderation. */
 export function connectionLook(keyStatus: string | undefined) {
-  return keyStatus === 'valid' ? { label: 'Connected', dot: 'var(--color-accent-400)', pulse: 'slow' as const }
+  return keyStatus === 'loading' ? { label: 'Checking…', dot: 'var(--color-neutral-600)', pulse: undefined }
+    : keyStatus === 'valid' ? { label: 'Connected', dot: 'var(--color-accent-400)', pulse: 'slow' as const }
     : keyStatus === 'invalid' ? { label: 'Key rejected', dot: 'var(--color-accent-200)', pulse: 'fast' as const }
     : { label: 'Not connected', dot: 'var(--color-neutral-600)', pulse: undefined };
 }
@@ -26,11 +27,12 @@ export function Shell(p: { children: ReactNode }) {
   const conn = useConnection(agency.id);
   const status = useStreamStatus(agency.id);
   const nav = useNavigate();
-  const look = connectionLook(conn.data?.key_status);
+  const keyState = conn.isLoading ? 'loading' : conn.data?.key_status;
+  const look = connectionLook(keyState);
   const mine = (targets.data ?? []).map(t => status.data?.get(t.unique_id)).filter(Boolean);
   const events = mine.reduce((a, s) => a + Number(s!.events_ingested ?? 0), 0);
   const last = mine.map(s => s!.last_event_at).filter(Boolean).sort().at(-1) ?? null;
-  const barRight = conn.data?.key_status === 'valid'
+  const barRight = keyState === 'loading' ? 'Checking Euler connection…' : conn.data?.key_status === 'valid'
     ? (last ? `Last event ${ago(last, now)} · ` : 'Waiting for events · ') + events.toLocaleString('en-US') + ' events ingested'
     : conn.data?.key_status === 'invalid' ? 'Euler rejected your API key — ledger and targets are not updating' : 'Live ingestion paused — add your Euler API key to start';
 
