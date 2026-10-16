@@ -6,6 +6,17 @@ export function need(name: string): string {
   return v;
 }
 
+/** A required env var that must be a bare http(s) origin. A path never matches a browser's Origin header and would double up in `${url}/api/...` redirects. */
+export function needOrigin(name: string): string {
+  const raw = need(name);
+  let u: URL;
+  try { u = new URL(raw); } catch { throw new Error(`${name} must be an absolute URL, got "${raw}"`); }
+  if ((u.protocol !== 'http:' && u.protocol !== 'https:') || u.pathname !== '/' || u.search || u.hash || u.username) {
+    throw new Error(`${name} must be a bare origin like ${u.origin === 'null' ? 'https://example.com' : u.origin}, got "${raw}"`);
+  }
+  return u.origin;
+}
+
 export const optional = (name: string): string | undefined => process.env[name]?.trim() || undefined;
 
 /** Fails fast if the worker/API was handed an anon/publishable key — the usual cause of RLS violations on insert. */
